@@ -425,7 +425,7 @@ tasks:
   # PHASE 5: Documentation & Cleanup
   # ============================================================================
 
-  - id: D1_T15_document_deployment
+  - id: D1_T16_document_deployment
     title: "Document deployment details and URLs"
     type: docs
     status: todo
@@ -446,14 +446,14 @@ tasks:
       - "Manual: Document Vercel project settings and configuration"
       - "Manual: Document any environment variable changes made"
 
-  - id: D1_T16_setup_monitoring
+  - id: D1_T17_setup_monitoring
     title: "Set up basic monitoring and alerts (optional)"
     type: chore
     status: todo
     priority: low
     description: >
-      Set up basic monitoring for the deployment. Replit may have built-in
-      monitoring. Document how to check logs and monitor the deployment.
+      Set up basic monitoring for the deployment. Vercel has built-in
+      monitoring and analytics. Document how to check logs and monitor the deployment.
     code_areas:
       - "deploy: Monitoring"
       - "deploy: Logging"
@@ -470,7 +470,7 @@ tasks:
   # PHASE 6: Rollback Plan (If Needed)
   # ============================================================================
 
-  - id: D1_T17_document_rollback_procedure
+  - id: D1_T18_document_rollback_procedure
     title: "Document rollback procedure"
     type: docs
     status: todo
