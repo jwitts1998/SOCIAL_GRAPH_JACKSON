@@ -1,15 +1,26 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder-key';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
-  console.warn('⚠️  Supabase credentials not configured properly.');
-  console.warn('To enable authentication, you need to:');
-  console.warn('1. Go to Replit Secrets');
-  console.warn('2. Add: VITE_SUPABASE_URL with your Supabase project URL');
-  console.warn('3. Add: VITE_SUPABASE_ANON_KEY with your Supabase anon key');
-  console.warn('4. Restart the application');
+// Validate environment variables
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error('⚠️  Supabase credentials not configured properly.');
+  console.error('Required environment variables:');
+  console.error('  - VITE_SUPABASE_URL');
+  console.error('  - VITE_SUPABASE_ANON_KEY');
+  console.error('Please set these in Vercel Dashboard → Project Settings → Environment Variables');
+  console.error('Then redeploy the application.');
+  throw new Error('Missing required Supabase environment variables. Check console for details.');
+}
+
+// Validate URL format
+try {
+  new URL(supabaseUrl);
+} catch (e) {
+  console.error('❌ Invalid VITE_SUPABASE_URL format. Must be a valid HTTP or HTTPS URL.');
+  console.error(`Current value: "${supabaseUrl}"`);
+  throw new Error(`Invalid VITE_SUPABASE_URL format: ${supabaseUrl}`);
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
@@ -21,5 +32,5 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 });
 
 export const isSupabaseConfigured = () => {
-  return Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
+  return Boolean(supabaseUrl && supabaseAnonKey);
 };
