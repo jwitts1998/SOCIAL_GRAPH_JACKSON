@@ -2,12 +2,16 @@ import { useState, useMemo, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import ContactCard from "@/components/ContactCard";
 import ContactDialog from "@/components/ContactDialog";
 import CsvUploadDialog from "@/components/CsvUploadDialog";
-import { Plus, Search, Upload, Users } from "lucide-react";
+import { Plus, Search, Upload, Users, Sparkles, Loader2 } from "lucide-react";
 import { useContacts, useContactsCount } from "@/hooks/useContacts";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/hooks/use-toast";
+import { batchEmbedContacts } from "@/lib/edgeFunctions";
+import { queryClient } from "@/lib/queryClient";
 
 export default function Contacts() {
   const [searchQuery, setSearchQuery] = useState("");
@@ -15,10 +19,14 @@ export default function Contacts() {
   const [showContactDialog, setShowContactDialog] = useState(false);
   const [showCsvUploadDialog, setShowCsvUploadDialog] = useState(false);
   const [editingContact, setEditingContact] = useState<any>(null);
+  const [isGeneratingEmbeddings, setIsGeneratingEmbeddings] = useState(false);
+  const [embeddingProgress, setEmbeddingProgress] = useState(0);
+  const [embeddingStats, setEmbeddingStats] = useState({ processed: 0, total: 0 });
   const CONTACTS_PER_PAGE = 50;
   
   const { data: contacts, isLoading } = useContacts();
   const { data: totalCount } = useContactsCount();
+  const { toast } = useToast();
 
   const stats = useMemo(() => {
     return {
@@ -53,6 +61,61 @@ export default function Contacts() {
     return filteredContacts.slice(startIndex, startIndex + CONTACTS_PER_PAGE);
   }, [filteredContacts, currentPage]);
 
+  const handleBatchGenerateEmbeddings = async () => {
+    setIsGeneratingEmbeddings(true);
+    setEmbeddingProgress(0);
+    setEmbeddingStats({ processed: 0, total: 0 });
+
+    let totalProcessed = 0;
+    let batchNumber = 1;
+    let hasMore = true;
+
+    try {
+      while (hasMore) {
+        const result = await batchEmbedContacts();
+        
+        const processed = result.processed || 0;
+        const total = result.total || 0;
+        hasMore = result.hasMore === true;
+
+        totalProcessed += processed;
+        setEmbeddingStats({ processed: totalProcessed, total: totalProcessed + (hasMore ? 50 : 0) });
+        
+        // Update progress (rough estimate - we don't know total ahead of time)
+        if (hasMore) {
+          setEmbeddingProgress(Math.min(95, (batchNumber * 50) / 10)); // Rough progress estimate
+        } else {
+          setEmbeddingProgress(100);
+        }
+
+        if (hasMore) {
+          batchNumber++;
+          // Wait 1 second between batches to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+
+      toast({
+        title: "Embeddings generated!",
+        description: `Successfully generated embeddings for ${totalProcessed} contacts.`,
+      });
+
+      // Refresh contacts to show updated embeddings
+      queryClient.invalidateQueries({ queryKey: ['/api/contacts'] });
+    } catch (error: any) {
+      console.error('Error generating embeddings:', error);
+      toast({
+        title: "Error generating embeddings",
+        description: error.message || "Failed to generate embeddings. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsGeneratingEmbeddings(false);
+      setEmbeddingProgress(0);
+      setEmbeddingStats({ processed: 0, total: 0 });
+    }
+  };
+
   return (
     <div className="p-8">
       <div className="mb-8">
@@ -71,6 +134,24 @@ export default function Contacts() {
             >
               <Upload className="w-4 h-4 mr-2" />
               Import CSV
+            </Button>
+            <Button 
+              variant="outline"
+              onClick={handleBatchGenerateEmbeddings}
+              disabled={isGeneratingEmbeddings || !contacts || contacts.length === 0}
+              data-testid="button-generate-embeddings"
+            >
+              {isGeneratingEmbeddings ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 mr-2" />
+                  Generate Embeddings
+                </>
+              )}
             </Button>
             <Button 
               onClick={() => {
@@ -98,6 +179,23 @@ export default function Contacts() {
             </div>
           </div>
         </Card>
+
+        {isGeneratingEmbeddings && (
+          <Card className="p-4 mb-6">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Generating embeddings...</span>
+                <span className="font-medium">
+                  {embeddingStats.processed > 0 && `${embeddingStats.processed} processed`}
+                </span>
+              </div>
+              <Progress value={embeddingProgress} className="h-2" />
+              <p className="text-xs text-muted-foreground">
+                Processing contacts in batches of 50. This may take a few minutes.
+              </p>
+            </div>
+          </Card>
+        )}
 
         <div className="relative mb-6">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -185,6 +283,9 @@ export default function Contacts() {
                 checkSizeMin={contact.checkSizeMin || undefined}
                 checkSizeMax={contact.checkSizeMax || undefined}
                 investorNotes={contact.investorNotes || undefined}
+                bio={contact.bio || undefined}
+                bioEmbedding={contact.bioEmbedding || undefined}
+                thesisEmbedding={contact.thesisEmbedding || undefined}
                 onEdit={() => {
                   setEditingContact(contact);
                   setShowContactDialog(true);

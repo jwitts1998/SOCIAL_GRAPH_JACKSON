@@ -1,8 +1,8 @@
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryClient } from '@/lib/queryClient';
-import { conversationFromDb, conversationToDb, segmentFromDb, segmentToDb } from '@/lib/supabaseHelpers';
-import type { Conversation, InsertConversation, ConversationSegment, InsertConversationSegment } from '@shared/schema';
+import { conversationFromDb, conversationToDb, segmentFromDb, segmentToDb, conversationEntityFromDb } from '@/lib/supabaseHelpers';
+import type { Conversation, InsertConversation, ConversationSegment, InsertConversationSegment, ConversationEntity } from '@shared/schema';
 
 export function useConversations() {
   return useQuery<Conversation[]>({
@@ -48,6 +48,23 @@ export function useConversationSegments(conversationId: string) {
       
       if (error) throw error;
       return (data || []).map(segmentFromDb);
+    },
+    enabled: !!conversationId,
+  });
+}
+
+export function useConversationEntities(conversationId: string) {
+  return useQuery<ConversationEntity[]>({
+    queryKey: ['/api/conversations', conversationId, 'entities'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('conversation_entities')
+        .select('*')
+        .eq('conversation_id', conversationId)
+        .order('created_at', { ascending: true });
+      
+      if (error) throw error;
+      return (data || []).map(conversationEntityFromDb);
     },
     enabled: !!conversationId,
   });

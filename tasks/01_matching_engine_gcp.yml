@@ -1,0 +1,830 @@
+# yaml-language-server: $schema=./task-schema.json
+epic: F1_Matching_Engine_GCP_Backend
+feature: Real-time_Contact_Matching_Engine
+context:
+  phase: 1
+  spec_refs:
+    - "Feature: GCP-based matching engine for REAL-TIME contact recommendations during conversations"
+    - "Docs: docs/content/MATCHING_ENGINE_SCHEMA.md"
+    - "Docs: docs/planning/REALTIME_MATCHING_ARCHITECTURE.md"
+    - "Docs: docs/content/RECSYS_API_SCHEMA.md"
+    - "Docs: docs/content/MATCHING_SIGNALS_AND_FEATURES.md"
+    - "Docs: docs/planning/MATCHING_ENGINE_ARCHITECTURE.md"
+    - "Docs: docs/workflow/BUILD_AND_RUN_GCP_MATCHING.md"
+  notes: >
+    Build a GCP-based matching engine that provides REAL-TIME contact recommendations
+    DURING conversations (not just after). As transcript segments arrive, entities are
+    extracted in real-time, and matches are generated incrementally. Uses semantic
+    embeddings (Vertex AI), ML models, and rule-based filtering. Replaces/enhances
+    existing GPT-3.5-based matching with scalable, sub-second latency streaming system.
+    Includes ML model training pipeline. See docs/planning/REALTIME_MATCHING_ARCHITECTURE.md
+    for real-time architecture details.
+defaults:
+  status: todo
+  priority: medium
+  owner: engineering
+  envs: [dev, staging, prod]
+
+tasks:
+  # ============================================================================
+  # PHASE 1A: GCP Infrastructure Setup
+  # ============================================================================
+
+  - id: F1_T1_setup_gcp_project
+    title: "Set up GCP project and enable required APIs"
+    type: chore
+    status: todo
+    priority: high
+    spec_refs:
+      - "Docs: docs/workflow/BUILD_AND_RUN_GCP_MATCHING.md"
+    description: >
+      Create GCP project, enable APIs (Cloud Functions, Vertex AI, Firestore, Pub/Sub, BigQuery),
+      create service accounts with appropriate permissions, set up billing alerts.
+    code_areas:
+      - "infra: GCP project configuration"
+      - "docs: docs/workflow/BUILD_AND_RUN_GCP_MATCHING.md"
+    acceptance_criteria:
+      - "GCP project created with billing enabled"
+      - "All required APIs enabled (Cloud Functions, Vertex AI, Firestore, Pub/Sub, BigQuery)"
+      - "Service account created with minimal required permissions"
+      - "Firestore database created (Native mode, us-central1)"
+      - "Pub/Sub topic 'conversation-entities' created"
+      - "Billing alerts configured"
+    tests:
+      - "Manual: Verify APIs enabled in GCP Console"
+      - "Manual: Test service account permissions"
+      - "Manual: Verify Firestore database accessible"
+
+  - id: F1_T2_create_firestore_schema
+    title: "Create Firestore collections and indexes"
+    type: chore
+    status: todo
+    priority: high
+    spec_refs:
+      - "Docs: docs/content/MATCHING_ENGINE_SCHEMA.md"
+    description: >
+      Create Firestore collections: contact_embeddings, conversation_embeddings, matching_cache.
+      Set up composite indexes for efficient queries. Configure TTL policies for cache.
+    code_areas:
+      - "infra: Firestore collections"
+      - "infra: Firestore indexes"
+    acceptance_criteria:
+      - "Collections created: contact_embeddings, conversation_embeddings, matching_cache"
+      - "Composite indexes created for efficient queries"
+      - "TTL policy set on matching_cache (1 hour expiration)"
+      - "Security rules configured (read/write scoped to userId)"
+    tests:
+      - "Manual: Verify collections exist in Firestore Console"
+      - "Manual: Test read/write operations with service account"
+      - "Unit: Test Firestore client initialization"
+
+  - id: F1_T3_setup_bigquery_tables
+    title: "Create BigQuery datasets and tables for ML training"
+    type: chore
+    status: todo
+    priority: medium
+    spec_refs:
+      - "Docs: docs/content/MATCHING_ENGINE_SCHEMA.md"
+      - "Docs: docs/content/MATCHING_SIGNALS_AND_FEATURES.md"
+    description: >
+      Create BigQuery dataset 'matching_training'. Create tables: matching_training_data,
+      matching_features. Set up scheduled exports from Supabase (daily).
+    code_areas:
+      - "infra: BigQuery SQL"
+      - "infra: Cloud Scheduler (for exports)"
+    acceptance_criteria:
+      - "BigQuery dataset 'matching_training' created"
+      - "Tables created: matching_training_data, matching_features"
+      - "Schema matches docs/content/MATCHING_ENGINE_SCHEMA.md"
+      - "Scheduled export from Supabase configured (daily at 2 AM UTC)"
+    tests:
+      - "Manual: Verify tables exist in BigQuery Console"
+      - "Manual: Test data export from Supabase"
+      - "Unit: Test BigQuery client queries"
+
+  # ============================================================================
+  # PHASE 1B: Embedding Pipeline
+  # ============================================================================
+
+  - id: F1_T4_implement_embedding_generation
+    title: "Implement embedding generation using Vertex AI Text Embeddings API"
+    type: story
+    status: todo
+    priority: high
+    spec_refs:
+      - "Docs: docs/content/MATCHING_ENGINE_SCHEMA.md"
+      - "Docs: docs/content/MATCHING_SIGNALS_AND_FEATURES.md"
+    description: >
+      Create Cloud Function 'generate-embeddings' that calls Vertex AI text-embedding-004
+      to generate 768-dim embeddings. Support batch processing. Cache results in Firestore.
+    code_areas:
+      - "gcp/functions/generate-embeddings/index.ts"
+      - "gcp/functions/shared/vertex-ai-client.ts"
+      - "gcp/functions/shared/firestore-client.ts"
+    acceptance_criteria:
+      - "Cloud Function 'generate-embeddings' deployed"
+      - "Calls Vertex AI text-embedding-004 API correctly"
+      - "Returns 768-dim embedding vectors"
+      - "Caches embeddings in Firestore (contact_embeddings, conversation_embeddings)"
+      - "Supports batch processing (multiple texts in one call)"
+      - "Error handling for API failures"
+      - "Latency < 500ms per embedding"
+    tests:
+      - "Unit: Test embedding generation with mock Vertex AI API"
+      - "Integration: Test with real Vertex AI API (dev key)"
+      - "Integration: Test Firestore caching"
+      - "Load: Test batch processing (10+ texts)"
+
+  - id: F1_T5_implement_contact_embedding_sync
+    title: "Implement contact embedding generation and sync from Supabase"
+    type: story
+    status: todo
+    priority: high
+    spec_refs:
+      - "Docs: docs/content/MATCHING_ENGINE_SCHEMA.md"
+    description: >
+      Create Cloud Function 'batch-update-embeddings' that syncs all contacts from Supabase,
+      generates embeddings for each (contact metadata + thesis), stores in Firestore.
+      Triggered by Cloud Scheduler (daily) or manually. Handle updates incrementally.
+    code_areas:
+      - "gcp/functions/batch-update-embeddings/index.ts"
+      - "gcp/functions/shared/supabase-client.ts"
+    acceptance_criteria:
+      - "Cloud Function 'batch-update-embeddings' deployed"
+      - "Fetches all contacts from Supabase (with theses)"
+      - "Generates embeddings for each contact"
+      - "Stores in Firestore contact_embeddings collection"
+      - "Handles incremental updates (only changed contacts)"
+      - "Cloud Scheduler triggers daily at 3 AM UTC"
+      - "Logs progress and errors"
+    tests:
+      - "Unit: Test Supabase contact fetching"
+      - "Integration: Test embedding generation for 100+ contacts"
+      - "Integration: Test Firestore storage"
+      - "Manual: Trigger Cloud Scheduler and verify execution"
+
+  - id: F1_T6_implement_conversation_embedding_generation
+    title: "Implement real-time conversation embedding generation"
+    type: story
+    status: todo
+    priority: high
+    spec_refs:
+      - "Docs: docs/content/MATCHING_ENGINE_SCHEMA.md"
+      - "Docs: docs/content/MATCHING_SIGNALS_AND_FEATURES.md"
+    description: >
+      Generate embeddings for conversation entities in real-time. Combine entity values
+      into single text, generate embedding, cache in Firestore. Used by matching function.
+    code_areas:
+      - "gcp/functions/match-contacts/index.ts (embedding generation logic)"
+      - "gcp/functions/shared/embedding-utils.ts"
+    acceptance_criteria:
+      - "Combines conversation entities into embedding text correctly"
+      - "Generates embedding using Vertex AI API"
+      - "Caches in Firestore conversation_embeddings collection"
+      - "Reuses cached embedding if available (< 1 hour old)"
+      - "Latency < 300ms (including cache check)"
+    tests:
+      - "Unit: Test entity text combination"
+      - "Integration: Test embedding generation"
+      - "Integration: Test Firestore caching"
+      - "Performance: Verify < 300ms latency"
+
+  # ============================================================================
+  # PHASE 1C: Matching Engine (Vertex AI Matching Engine)
+  # ============================================================================
+
+  - id: F1_T7_setup_vertex_ai_matching_engine
+    title: "Set up Vertex AI Matching Engine index and endpoint"
+    type: chore
+    status: todo
+    priority: high
+    spec_refs:
+      - "Docs: docs/planning/MATCHING_ENGINE_ARCHITECTURE.md"
+      - "Docs: docs/workflow/BUILD_AND_RUN_GCP_MATCHING.md"
+    description: >
+      Create Vertex AI Matching Engine index with contact embeddings. Deploy index endpoint.
+      Set up index updates (when contact embeddings change). Configure for 768-dim vectors.
+    code_areas:
+      - "gcp/scripts/create_matching_index.py"
+      - "gcp/scripts/update_matching_index.py"
+    acceptance_criteria:
+      - "Matching Engine index created with contact embeddings"
+      - "Index endpoint deployed and accessible"
+      - "Index supports 768-dim vectors (text-embedding-004)"
+      - "Index update script works (incremental updates)"
+      - "Query latency < 100ms for top-50 candidates"
+    tests:
+      - "Manual: Verify index exists in Vertex AI Console"
+      - "Manual: Test index endpoint queries"
+      - "Performance: Test query latency (p95 < 100ms)"
+      - "Integration: Test index updates with new contacts"
+
+  - id: F1_T8_implement_similarity_search
+    title: "Implement similarity search using Matching Engine"
+    type: story
+    status: todo
+    priority: high
+    spec_refs:
+      - "Docs: docs/content/MATCHING_ENGINE_SCHEMA.md"
+      - "Docs: docs/planning/MATCHING_ENGINE_ARCHITECTURE.md"
+    description: >
+      Implement query logic that takes conversation embedding, queries Matching Engine
+      for top-K similar contacts (K=50), returns candidate list with similarity scores.
+    code_areas:
+      - "gcp/functions/match-contacts/index.ts (similarity search logic)"
+      - "gcp/functions/shared/matching-engine-client.ts"
+    acceptance_criteria:
+      - "Queries Matching Engine with conversation embedding"
+      - "Returns top-50 candidates with similarity scores"
+      - "Filters by userId (only user's contacts)"
+      - "Handles empty results gracefully"
+      - "Latency < 200ms (including network)"
+    tests:
+      - "Unit: Test Matching Engine client with mock responses"
+      - "Integration: Test with real Matching Engine index"
+      - "Performance: Verify < 200ms latency"
+      - "Edge case: Test with no matching contacts"
+
+  # ============================================================================
+  # PHASE 1D: Scoring & Ranking
+  # ============================================================================
+
+  - id: F1_T9_implement_rule_based_scoring
+    title: "Implement rule-based scoring (stage, sector, geo, check size matching)"
+    type: story
+    status: todo
+    priority: high
+    spec_refs:
+      - "Docs: docs/content/MATCHING_SIGNALS_AND_FEATURES.md"
+    description: >
+      Implement rule-based scoring logic: stage matching (exact/adjacent/range),
+      sector matching (exact/related), geo matching (exact/region), check size matching.
+      Combine into rule_score (0-1). See MATCHING_SIGNALS_AND_FEATURES.md for formulas.
+    code_areas:
+      - "gcp/functions/match-contacts/index.ts (rule scoring logic)"
+      - "gcp/functions/shared/rule-scorer.ts"
+    acceptance_criteria:
+      - "Stage matching: exact (+0.4), adjacent (+0.2), range (+0.1)"
+      - "Sector matching: exact (+0.3), related (+0.15)"
+      - "Geo matching: exact (+0.2), region (+0.1)"
+      - "Check size matching: overlap (+0.2), adjacent (+0.1)"
+      - "Combined rule_score calculated correctly (weighted sum)"
+      - "All scores normalized to 0-1 range"
+    tests:
+      - "Unit: Test each rule type independently"
+      - "Unit: Test combined rule_score calculation"
+      - "Integration: Test with real contact/thesis data"
+      - "Edge case: Test with missing data (null values)"
+
+  - id: F1_T10_implement_ml_model_training_pipeline
+    title: "Implement ML model training pipeline (XGBoost via Vertex AI AutoML)"
+    type: story
+    status: todo
+    priority: high
+    spec_refs:
+      - "Docs: docs/content/MATCHING_SIGNALS_AND_FEATURES.md"
+      - "Docs: docs/planning/MATCHING_ENGINE_ARCHITECTURE.md"
+    description: >
+      Create training pipeline: export data from BigQuery, engineer features,
+      train XGBoost model via Vertex AI AutoML Tables, evaluate, deploy to endpoint.
+      Set up weekly retraining schedule.
+    code_areas:
+      - "gcp/scripts/feature_engineering.py"
+      - "gcp/scripts/train_model.py"
+      - "gcp/scripts/evaluate_model.py"
+    acceptance_criteria:
+      - "Feature engineering script generates training dataset"
+      - "XGBoost model trained via Vertex AI AutoML"
+      - "Model evaluated on test set (accuracy > 75%)"
+      - "Model deployed to Vertex AI Endpoint"
+      - "Weekly retraining scheduled (Cloud Scheduler)"
+      - "Model versioning and A/B testing support"
+    tests:
+      - "Unit: Test feature engineering logic"
+      - "Integration: Test model training with sample data"
+      - "Integration: Test model deployment"
+      - "Manual: Verify weekly retraining schedule"
+
+  - id: F1_T11_implement_ml_model_scoring
+    title: "Implement ML model scoring in matching function"
+    type: story
+    status: todo
+    priority: high
+    spec_refs:
+      - "Docs: docs/content/MATCHING_SIGNALS_AND_FEATURES.md"
+    description: >
+      Integrate ML model into matching function. For each candidate, generate feature vector,
+      call Vertex AI Endpoint for prediction (0-1 score), use in final scoring formula.
+    code_areas:
+      - "gcp/functions/match-contacts/index.ts (ML scoring logic)"
+      - "gcp/functions/shared/ml-model-client.ts"
+      - "gcp/functions/shared/feature-vector-builder.ts"
+    acceptance_criteria:
+      - "Feature vector generated for each candidate"
+      - "ML model prediction called via Vertex AI Endpoint"
+      - "Prediction score (0-1) used in final scoring"
+      - "Fallback to rule-based only if ML model unavailable"
+      - "Latency < 100ms per prediction (batch if possible)"
+    tests:
+      - "Unit: Test feature vector generation"
+      - "Integration: Test ML model prediction"
+      - "Performance: Test batch predictions"
+      - "Edge case: Test fallback when model unavailable"
+
+  - id: F1_T12_implement_final_scoring_and_ranking
+    title: "Implement final scoring formula and ranking"
+    type: story
+    status: todo
+    priority: high
+    spec_refs:
+      - "Docs: docs/content/MATCHING_ENGINE_SCHEMA.md"
+      - "Docs: docs/content/MATCHING_SIGNALS_AND_FEATURES.md"
+    description: >
+      Combine semantic_similarity (0.5), rule_score (0.3), ml_model_score (0.2),
+      apply relationship_boost (1.0-1.5). Map to star ratings (3: >=0.75, 2: >=0.50, 1: >=0.25).
+      Rank by final_score, filter by minScore, return top maxResults.
+    code_areas:
+      - "gcp/functions/match-contacts/index.ts (final scoring logic)"
+      - "gcp/functions/shared/scorer.ts"
+    acceptance_criteria:
+      - "Final score calculated: (semantic*0.5 + rule*0.3 + ml*0.2) * relationship_boost"
+      - "Star rating mapped correctly (3: >=0.75, 2: >=0.50, 1: >=0.25)"
+      - "Results ranked by final_score (descending)"
+      - "Filtered by minScore option"
+      - "Limited to maxResults option (default: 10, max: 50)"
+      - "Reasons array generated from matched criteria"
+      - "Justification text generated (human-readable)"
+    tests:
+      - "Unit: Test scoring formula with various inputs"
+      - "Unit: Test star rating mapping"
+      - "Unit: Test ranking and filtering"
+      - "Integration: Test end-to-end scoring with real data"
+
+  # ============================================================================
+  # PHASE 1E: Cloud Functions Implementation
+  # ============================================================================
+
+  - id: F1_T13_implement_match_contacts_function
+    title: "Implement main match-contacts Cloud Function"
+    type: story
+    status: todo
+    priority: high
+    spec_refs:
+      - "Docs: docs/content/RECSYS_API_SCHEMA.md"
+      - "Docs: docs/planning/MATCHING_ENGINE_ARCHITECTURE.md"
+    description: >
+      Implement Cloud Function 'match-contacts' (HTTP trigger). Validates JWT, generates/retrieves
+      embeddings, queries Matching Engine, scores candidates, returns ranked results.
+      Handles errors, caching, rate limiting.
+    code_areas:
+      - "gcp/functions/match-contacts/index.ts"
+      - "gcp/functions/shared/auth.ts"
+      - "gcp/functions/shared/cache.ts"
+    acceptance_criteria:
+      - "Cloud Function deployed and accessible via HTTPS"
+      - "JWT validation works (Supabase tokens)"
+      - "Request/response format matches RECSYS_API_SCHEMA.md"
+      - "Caching implemented (Firestore matching_cache)"
+      - "Error handling for all failure modes"
+      - "Rate limiting (100 req/min per user)"
+      - "Latency < 1s (p95)"
+    tests:
+      - "Unit: Test JWT validation"
+      - "Unit: Test request/response format"
+      - "Integration: Test end-to-end matching flow"
+      - "Performance: Load test (100 req/sec)"
+      - "Security: Test unauthorized access blocked"
+
+  - id: F1_T14_implement_match_contacts_trigger
+    title: "Implement Pub/Sub triggered match-contacts-trigger function"
+    type: story
+    status: todo
+    priority: medium
+    spec_refs:
+      - "Docs: docs/content/RECSYS_API_SCHEMA.md"
+      - "Docs: docs/planning/MATCHING_ENGINE_ARCHITECTURE.md"
+    description: >
+      Implement Cloud Function 'match-contacts-trigger' (Pub/Sub trigger). Processes
+      conversation-entities messages, generates matches automatically, updates Supabase
+      match_suggestions table via service account.
+    code_areas:
+      - "gcp/functions/match-contacts-trigger/index.ts"
+      - "gcp/functions/shared/supabase-client.ts"
+    acceptance_criteria:
+      - "Cloud Function deployed with Pub/Sub trigger"
+      - "Processes conversation-entities messages correctly"
+      - "Generates matches and inserts into Supabase"
+      - "Handles duplicate messages (idempotent)"
+      - "Error handling and retry logic"
+    tests:
+      - "Unit: Test message processing"
+      - "Integration: Test Pub/Sub message trigger"
+      - "Integration: Test Supabase insertion"
+      - "Edge case: Test duplicate message handling"
+
+  - id: F1_T15_implement_batch_update_embeddings_function
+    title: "Implement batch-update-embeddings Cloud Function"
+    type: story
+    status: todo
+    priority: medium
+    spec_refs:
+      - "Docs: docs/content/RECSYS_API_SCHEMA.md"
+    description: >
+      Implement Cloud Function 'batch-update-embeddings' (HTTP + Cloud Scheduler trigger).
+      Syncs contacts from Supabase, generates embeddings, updates Firestore and Matching Engine index.
+      Supports incremental updates.
+    code_areas:
+      - "gcp/functions/batch-update-embeddings/index.ts"
+    acceptance_criteria:
+      - "Cloud Function deployed"
+      - "Fetches contacts from Supabase (paginated)"
+      - "Generates embeddings in batch"
+      - "Updates Firestore contact_embeddings"
+      - "Updates Matching Engine index"
+      - "Cloud Scheduler triggers daily at 3 AM UTC"
+      - "Logs progress and errors"
+    tests:
+      - "Unit: Test Supabase contact fetching"
+      - "Integration: Test batch embedding generation"
+      - "Integration: Test Firestore and index updates"
+      - "Manual: Test Cloud Scheduler trigger"
+
+  # ============================================================================
+  # PHASE 1F: Real-Time Streaming Architecture
+  # ============================================================================
+
+  - id: F1_T16_implement_streaming_entity_extraction
+    title: "Implement streaming entity extraction (triggered by transcript segments)"
+    type: story
+    status: todo
+    priority: high
+    spec_refs:
+      - "Docs: docs/planning/REALTIME_MATCHING_ARCHITECTURE.md"
+      - "Existing: supabase/functions/extract-entities/index.ts"
+    description: >
+      Update extract-entities Edge Function to support streaming mode. Triggered by
+      Supabase Realtime webhook or Pub/Sub when new conversation_segments are inserted.
+      Extract entities from recent segments (last 2 minutes), incrementally update
+      conversation_entities table. Maintain rolling window of entities.
+    code_areas:
+      - "supabase/functions/extract-entities/index.ts (streaming mode)"
+      - "supabase/functions/extract-entities-streaming/index.ts (new)"
+    acceptance_criteria:
+      - "Edge Function supports streaming mode (triggered by new segments)"
+      - "Extracts entities from recent segments (last 2 minutes window)"
+      - "Incrementally updates conversation_entities (add/update, don't replace)"
+      - "Latency < 2 seconds from segment to entity"
+      - "Handles concurrent extractions (multiple segments arriving)"
+      - "Maintains entity confidence scores over time"
+    tests:
+      - "Integration: Test streaming extraction with real transcript segments"
+      - "Performance: Verify < 2s latency"
+      - "Edge case: Test with rapid segment arrivals"
+      - "Edge case: Test entity deduplication"
+
+  - id: F1_T17_implement_incremental_matching
+    title: "Implement incremental matching (update matches as entities arrive)"
+    type: story
+    status: todo
+    priority: high
+    spec_refs:
+      - "Docs: docs/planning/REALTIME_MATCHING_ARCHITECTURE.md"
+      - "Docs: docs/content/MATCHING_ENGINE_SCHEMA.md"
+    description: >
+      Create GCP Function 'match-contacts-incremental' that processes new entities
+      incrementally. Maintains rolling window of entities (last 2 minutes), updates
+      conversation embedding, re-scores existing matches, adds new matches, removes
+      outdated matches. Triggered by Pub/Sub when new entities arrive.
+    code_areas:
+      - "gcp/functions/match-contacts-incremental/index.ts"
+      - "gcp/functions/shared/incremental-matcher.ts"
+    acceptance_criteria:
+      - "GCP Function 'match-contacts-incremental' deployed"
+      - "Triggered by Pub/Sub (conversation-entities topic)"
+      - "Maintains rolling window of entities (last 2 minutes)"
+      - "Updates conversation embedding incrementally"
+      - "Re-scores existing matches (don't replace, update)"
+      - "Adds new matches if new entity creates connections"
+      - "Removes matches if they no longer meet threshold"
+      - "Latency < 1 second from entity to match"
+    tests:
+      - "Integration: Test incremental matching with new entities"
+      - "Performance: Verify < 1s latency"
+      - "Edge case: Test match score updates over time"
+      - "Edge case: Test match removal when threshold not met"
+
+  - id: F1_T18_setup_realtime_triggers
+    title: "Set up real-time triggers (Supabase Realtime → Pub/Sub → GCP)"
+    type: chore
+    status: todo
+    priority: high
+    spec_refs:
+      - "Docs: docs/planning/REALTIME_MATCHING_ARCHITECTURE.md"
+    description: >
+      Set up event streaming pipeline: Supabase Realtime webhook on conversation_segments
+      INSERT → Pub/Sub message → GCP Functions. Configure Pub/Sub topic/subscriptions,
+      set up webhook endpoints, test end-to-end flow.
+    code_areas:
+      - "infra: Supabase Realtime webhooks"
+      - "infra: Pub/Sub topics/subscriptions"
+      - "gcp/functions/webhook-handlers/index.ts"
+    acceptance_criteria:
+      - "Supabase Realtime webhook configured for conversation_segments INSERT"
+      - "Pub/Sub topic 'conversation-segments' created"
+      - "Pub/Sub topic 'conversation-entities' created"
+      - "Webhook handler receives events and publishes to Pub/Sub"
+      - "End-to-end flow tested: segment → entity → match"
+      - "Error handling and retry logic"
+    tests:
+      - "Integration: Test webhook receives Supabase events"
+      - "Integration: Test Pub/Sub message publishing"
+      - "Integration: Test end-to-end flow"
+      - "Edge case: Test webhook failure handling"
+
+  - id: F1_T19_implement_match_state_tracking
+    title: "Implement match state tracking (new/updated/removed matches)"
+    type: story
+    status: todo
+    priority: medium
+    spec_refs:
+      - "Docs: docs/planning/REALTIME_MATCHING_ARCHITECTURE.md"
+      - "Docs: docs/content/MATCHING_ENGINE_SCHEMA.md"
+    description: >
+      Track match lifecycle: when matches are added, updated, or removed. Add fields
+      to match_suggestions table: first_seen_at, last_updated_at, match_history.
+      Update UI to show match recency and evolution.
+    code_areas:
+      - "shared/schema.ts (add match tracking fields)"
+      - "supabase/migrations/YYYYMMDD_add_match_tracking.sql"
+      - "gcp/functions/match-contacts-incremental/index.ts (state tracking)"
+    acceptance_criteria:
+      - "match_suggestions table has: first_seen_at, last_updated_at, match_history"
+      - "Match state tracked: new, updated, removed"
+      - "Match history stored (JSON array of state changes)"
+      - "UI shows match recency indicators"
+      - "UI shows match evolution (score changes over time)"
+    tests:
+      - "Unit: Test match state tracking logic"
+      - "Integration: Test match lifecycle (add → update → remove)"
+      - "Manual: Verify UI shows match recency"
+
+  - id: F1_T20_implement_realtime_ui_indicators
+    title: "Implement real-time UI indicators and match evolution display"
+    type: story
+    status: todo
+    priority: medium
+    spec_refs:
+      - "Docs: docs/planning/REALTIME_MATCHING_ARCHITECTURE.md"
+      - "Existing: client/src/pages/Record.tsx"
+    description: >
+      Update frontend to show real-time processing indicators, match recency badges,
+      match evolution (score changes), and "analyzing..." states. Enhance SuggestionCard
+      to show when matches are new vs updated.
+    code_areas:
+      - "client/src/pages/Record.tsx (real-time indicators)"
+      - "client/src/components/SuggestionCard.tsx (match state display)"
+      - "client/src/components/MatchEvolutionIndicator.tsx (new)"
+    acceptance_criteria:
+      - "Show 'analyzing...' indicator during entity extraction"
+      - "Show 'matching...' indicator during match generation"
+      - "Highlight new matches (added in last 30 seconds)"
+      - "Show match score changes over time"
+      - "Animate match additions/updates"
+      - "Display match confidence/recency"
+    tests:
+      - "E2E: Test real-time indicators appear during conversation"
+      - "E2E: Test match evolution display"
+      - "Manual: Verify UI animations and indicators"
+
+  # ============================================================================
+  # PHASE 1G: Integration with Existing App
+  # ============================================================================
+
+  - id: F1_T21_update_supabase_edge_function
+    title: "Update generate-matches Edge Function to call GCP API (with fallback)"
+    type: story
+    status: todo
+    priority: high
+    spec_refs:
+      - "Existing: supabase/functions/generate-matches/index.ts"
+    description: >
+      Update existing Supabase Edge Function 'generate-matches' to call GCP match-contacts
+      API first. If GCP fails/times out, fall back to existing GPT-3.5 logic. Log which
+      path was used. Maintain backward compatibility.
+    code_areas:
+      - "supabase/functions/generate-matches/index.ts"
+    acceptance_criteria:
+      - "Calls GCP match-contacts API (primary path)"
+      - "Falls back to GPT-3.5 if GCP fails/times out"
+      - "Logs which path was used (GCP vs GPT)"
+      - "Maintains existing response format"
+      - "Error handling for both paths"
+      - "Backward compatible (no breaking changes)"
+    tests:
+      - "Integration: Test GCP path (success)"
+      - "Integration: Test GPT fallback (GCP failure)"
+      - "Integration: Test timeout handling"
+      - "Manual: Test with real conversation"
+
+  - id: F1_T22_add_gcp_api_key_to_supabase_secrets
+    title: "Add GCP API configuration to Supabase Edge Function secrets"
+    type: chore
+    status: todo
+    priority: high
+    spec_refs:
+      - "Docs: docs/workflow/BUILD_AND_RUN_GCP_MATCHING.md"
+    description: >
+      Add GCP API endpoint URL and service account key to Supabase Edge Function secrets.
+      Configure environment variables for GCP project ID, region, etc.
+    code_areas:
+      - "infra: Supabase Edge Function secrets"
+    acceptance_criteria:
+      - "GCP_API_URL secret added to Supabase"
+      - "GCP_SERVICE_ACCOUNT_KEY secret added (for service-to-service auth)"
+      - "Edge Function can access GCP API"
+      - "Secrets not exposed in code"
+    tests:
+      - "Manual: Verify secrets in Supabase Dashboard"
+      - "Integration: Test Edge Function can call GCP API"
+
+  - id: F1_T23_test_integration_with_frontend
+    title: "Test end-to-end integration: Frontend → Edge Function → GCP → Results"
+    type: story
+    status: todo
+    priority: high
+    spec_refs:
+      - "Existing: client/src/lib/edgeFunctions.ts"
+      - "Existing: client/src/pages/Record.tsx"
+    description: >
+      Test full flow: Frontend calls generateMatches() → Edge Function → GCP API →
+      Results returned → UI updates. Verify real-time updates work, error handling,
+      fallback behavior.
+    code_areas:
+      - "test: End-to-end integration tests"
+    acceptance_criteria:
+      - "Frontend can call generateMatches() successfully"
+      - "GCP API called and returns results"
+      - "Results appear in UI (real-time subscription)"
+      - "Error handling works (shows user-friendly message)"
+      - "Fallback to GPT works if GCP fails"
+      - "Latency acceptable (< 2s total)"
+    tests:
+      - "E2E: Test full flow with real conversation"
+      - "E2E: Test error scenarios"
+      - "E2E: Test fallback behavior"
+      - "Performance: Measure end-to-end latency"
+
+  # ============================================================================
+  # PHASE 1H: ML Model Training & Optimization
+  # ============================================================================
+
+  - id: F1_T24_implement_training_data_export
+    title: "Implement BigQuery training data export from Supabase"
+    type: story
+    status: todo
+    priority: medium
+    spec_refs:
+      - "Docs: docs/content/MATCHING_ENGINE_SCHEMA.md"
+    description: >
+      Create Cloud Scheduler job that exports conversation_entities, contacts, theses,
+      match_suggestions from Supabase to BigQuery daily. Transform data to match
+      matching_training_data schema.
+    code_areas:
+      - "gcp/scripts/export_training_data.py"
+      - "infra: Cloud Scheduler job"
+    acceptance_criteria:
+      - "Daily export job configured (2 AM UTC)"
+      - "Exports conversation_entities, contacts, theses, match_suggestions"
+      - "Data transformed to match BigQuery schema"
+      - "Handles incremental updates (only new data)"
+      - "Error handling and retry logic"
+    tests:
+      - "Unit: Test data transformation logic"
+      - "Integration: Test BigQuery export"
+      - "Manual: Verify daily export runs successfully"
+
+  - id: F1_T25_implement_feature_engineering_pipeline
+    title: "Implement feature engineering pipeline for ML training"
+    type: story
+    status: todo
+    priority: medium
+    spec_refs:
+      - "Docs: docs/content/MATCHING_SIGNALS_AND_FEATURES.md"
+    description: >
+      Create BigQuery SQL/Cloud Function that engineers features from training data:
+      embedding similarities, rule-based scores, categorical features, temporal features.
+      Output to matching_features table.
+    code_areas:
+      - "gcp/sql/feature_engineering.sql"
+      - "gcp/functions/feature-engineering/index.ts"
+    acceptance_criteria:
+      - "Feature engineering SQL/function implemented"
+      - "Generates all features from MATCHING_SIGNALS_AND_FEATURES.md"
+      - "Outputs to matching_features table"
+      - "Handles missing data (imputation)"
+      - "Normalizes features to 0-1 range"
+    tests:
+      - "Unit: Test feature engineering logic"
+      - "Integration: Test with real training data"
+      - "Manual: Verify features table populated correctly"
+
+  - id: F1_T26_implement_model_evaluation_and_ab_testing
+    title: "Implement model evaluation and A/B testing framework"
+    type: story
+    status: todo
+    priority: low
+    spec_refs:
+      - "Docs: docs/planning/MATCHING_ENGINE_ARCHITECTURE.md"
+    description: >
+      Create evaluation script that compares new model vs. current (baseline) on test set.
+      Calculate metrics: precision, recall, F1, accuracy. A/B test framework: route
+      X% of traffic to new model, compare performance, roll out if improvement > 5%.
+    code_areas:
+      - "gcp/scripts/evaluate_model.py"
+      - "gcp/functions/match-contacts/index.ts (A/B testing logic)"
+    acceptance_criteria:
+      - "Evaluation script calculates metrics (precision, recall, F1, accuracy)"
+      - "A/B testing framework routes traffic (configurable %)"
+      - "Performance comparison (new vs baseline)"
+      - "Rollout decision logic (improvement > 5%)"
+      - "Metrics logged to Cloud Monitoring"
+    tests:
+      - "Unit: Test evaluation metrics calculation"
+      - "Integration: Test A/B testing routing"
+      - "Manual: Run evaluation on test set"
+
+  # ============================================================================
+  # PHASE 1I: Monitoring, Observability, Documentation
+  # ============================================================================
+
+  - id: F1_T27_setup_monitoring_and_alerting
+    title: "Set up Cloud Monitoring dashboards and alerts"
+    type: chore
+    status: todo
+    priority: medium
+    spec_refs:
+      - "Docs: docs/planning/MATCHING_ENGINE_ARCHITECTURE.md"
+    description: >
+      Create Cloud Monitoring dashboards for: request count, latency (p50/p95/p99),
+      error rate, cache hit rate, model predictions, cost. Set up alerts for:
+      latency > 2s, error rate > 1%, cost > $5K/month.
+    code_areas:
+      - "infra: Cloud Monitoring dashboards"
+      - "infra: Cloud Monitoring alerts"
+    acceptance_criteria:
+      - "Dashboard created with key metrics"
+      - "Alerts configured: latency, error rate, cost"
+      - "Alerts send notifications (email/Slack)"
+      - "Logs structured for easy querying"
+    tests:
+      - "Manual: Verify dashboard displays correctly"
+      - "Manual: Test alert triggers"
+
+  - id: F1_T28_implement_logging_and_tracing
+    title: "Implement structured logging and request tracing"
+    type: chore
+    status: todo
+    priority: medium
+    spec_refs:
+      - "Docs: docs/planning/MATCHING_ENGINE_ARCHITECTURE.md"
+    description: >
+      Add structured logging to all Cloud Functions: request ID, user ID, processing time,
+      error details, model version. Use Cloud Logging. Add request tracing (correlation IDs).
+    code_areas:
+      - "gcp/functions/shared/logger.ts"
+      - "gcp/functions/match-contacts/index.ts (logging)"
+      - "gcp/functions/generate-embeddings/index.ts (logging)"
+    acceptance_criteria:
+      - "All functions log structured JSON"
+      - "Request ID included in all logs"
+      - "User ID included (for filtering)"
+      - "Processing time logged"
+      - "Errors logged with stack traces"
+      - "Logs queryable in Cloud Logging"
+    tests:
+      - "Manual: Verify logs in Cloud Logging"
+      - "Manual: Test log querying by request ID"
+
+  - id: F1_T29_create_developer_documentation
+    title: "Create developer documentation and runbooks"
+    type: chore
+    status: todo
+    priority: low
+    spec_refs:
+      - "Docs: docs/workflow/BUILD_AND_RUN_GCP_MATCHING.md"
+    description: >
+      Update/create documentation: architecture diagrams, API reference, troubleshooting guide,
+      runbooks for common operations (deploy, retrain model, debug issues).
+    code_areas:
+      - "docs/workflow/BUILD_AND_RUN_GCP_MATCHING.md (update)"
+      - "docs/planning/MATCHING_ENGINE_ARCHITECTURE.md (update)"
+    acceptance_criteria:
+      - "Architecture diagram updated"
+      - "API reference complete"
+      - "Troubleshooting guide created"
+      - "Runbooks for common operations"
+      - "Examples and code snippets"
+    tests:
+      - "Manual: Review documentation completeness"
+      - "Manual: Test runbook steps"
+

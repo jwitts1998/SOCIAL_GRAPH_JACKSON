@@ -78,3 +78,51 @@ export async function generateIntroEmail(matchSuggestionId: string, conversation
   if (error) throw error;
   return data;
 }
+
+export async function extractTasks(conversationId: string) {
+  const { data, error } = await supabase.functions.invoke('extract-tasks', {
+    body: { conversationId }
+  });
+  
+  if (error) {
+    console.error('❌ Extract tasks error:', error);
+    throw error;
+  }
+  return data;
+}
+
+export async function generateSummary(conversationId: string) {
+  const { data, error } = await supabase.functions.invoke('generate-summary', {
+    body: { conversationId }
+  });
+  
+  if (error) {
+    console.error('❌ Generate summary error:', error);
+    throw error;
+  }
+  return data;
+}
+
+export async function embedContact(contactId: string) {
+  const { data, error } = await supabase.functions.invoke('embed-contacts', {
+    body: { contactId, mode: 'single' }
+  });
+  
+  if (error) {
+    console.error('❌ Embed contact error:', error);
+    throw error;
+  }
+  return data;
+}
+
+export async function batchEmbedContacts() {
+  const { data, error } = await supabase.functions.invoke('embed-contacts', {
+    body: { mode: 'batch' }
+  });
+  
+  if (error) {
+    console.error('❌ Batch embed contacts error:', error);
+    throw error;
+  }
+  return data;
+}

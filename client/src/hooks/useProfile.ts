@@ -18,7 +18,47 @@ export function useProfile() {
         .single();
       
       if (error) {
-        if (error.code === 'PGRST116') return null;
+        // PGRST116 = not found (no row returned)
+        if (error.code === 'PGRST116') {
+          console.warn('Profile not found for user, attempting to create...');
+          // Profile doesn't exist, try to create it
+          try {
+            const { data: newProfile, error: createError } = await supabase
+              .from('profiles')
+              .insert({
+                id: user.id,
+                email: user.email || '',
+                full_name: user.user_metadata?.full_name || null,
+              })
+              .select()
+              .single();
+            
+            if (createError) {
+              console.error('Error creating profile:', createError);
+              return null;
+            }
+            
+            // Also create user_preferences
+            await supabase
+              .from('user_preferences')
+              .insert({ profile_id: user.id });
+            
+            return profileFromDb(newProfile);
+          } catch (createErr) {
+            console.error('Error creating profile:', createErr);
+            return null;
+          }
+        }
+        
+        // Log unexpected errors for debugging
+        console.error('Error fetching profile:', error);
+        
+        // For 400/406 errors, return null instead of throwing
+        if (error.message?.includes('400') || error.message?.includes('406')) {
+          console.warn('Profile query failed with 400/406, returning null');
+          return null;
+        }
+        
         throw error;
       }
       return profileFromDb(data);
@@ -40,7 +80,19 @@ export function useUserPreferences() {
         .single();
       
       if (error) {
+        // PGRST116 = not found (no row returned)
         if (error.code === 'PGRST116') return null;
+        
+        // Log unexpected errors for debugging
+        console.error('Error fetching user preferences:', error);
+        
+        // For 400/406 errors, return null instead of throwing
+        // This allows the UI to continue working even if preferences aren't available
+        if (error.message?.includes('400') || error.message?.includes('406')) {
+          console.warn('User preferences query failed with 400/406, returning null');
+          return null;
+        }
+        
         throw error;
       }
       return preferencesFromDb(data);

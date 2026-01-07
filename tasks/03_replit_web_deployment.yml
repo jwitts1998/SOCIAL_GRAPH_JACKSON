@@ -1,0 +1,431 @@
+# yaml-language-server: $schema=./task-schema.json
+epic: D1_Web_Deployment
+feature: Replit_Production_Deployment
+context:
+  phase: 1
+  spec_refs:
+    - "Docs: docs/WEB_DEPLOYMENT_PLAN.md"
+    - "Docs: docs/ARCHITECTURE.md"
+    - "Config: .replit (deployment configuration)"
+  notes: >
+    Deploy the Social Graph Connector web application to Replit production.
+    This is a CAREFUL, non-destructive deployment that preserves all existing
+    functionality. The .replit file is already configured for autoscale deployment.
+    We will verify everything works before and after deployment, and ensure we
+    don't break any existing functionality.
+defaults:
+  status: todo
+  priority: high
+  owner: engineering
+  envs: [prod]
+
+tasks:
+  # ============================================================================
+  # PHASE 1: Pre-Deployment Verification & Safety Checks
+  # ============================================================================
+
+  - id: D1_T1_verify_current_state
+    title: "Verify current application state and backup configuration"
+    type: chore
+    status: todo
+    priority: critical
+    description: >
+      Before making any changes, verify the current state of the application.
+      Document what's working, check git status, and ensure we have a rollback plan.
+      This is a SAFETY CHECK to ensure we don't break anything.
+    code_areas:
+      - "config: .replit"
+      - "config: package.json"
+      - "config: environment variables"
+    acceptance_criteria:
+      - "Git repository is clean (no uncommitted changes)"
+      - "Current .replit configuration is documented"
+      - "All environment variables are listed and documented"
+      - "Current deployment status is known (if any)"
+      - "Backup plan is documented"
+    tests:
+      - "Manual: Run `git status` - should be clean"
+      - "Manual: Document current .replit settings"
+      - "Manual: List all Replit Secrets (screenshot/document)"
+      - "Manual: Test app locally with `npm run dev` - verify it works"
+
+  - id: D1_T2_verify_build_process
+    title: "Verify production build works locally"
+    type: chore
+    status: todo
+    priority: critical
+    description: >
+      Test the production build process locally to ensure it works before deploying.
+      This catches any build issues before they hit production.
+    code_areas:
+      - "build: npm run build"
+      - "build: npm start"
+    acceptance_criteria:
+      - "`npm run build` completes successfully"
+      - "`dist/` folder is created with expected structure"
+      - "`dist/index.js` exists (server bundle)"
+      - "`dist/public/` exists (client bundle)"
+      - "`npm start` runs without errors"
+      - "Production build serves on port 5000"
+      - "App loads in browser at http://localhost:5000"
+    tests:
+      - "Manual: Run `npm run build` - should succeed"
+      - "Manual: Verify `dist/` folder structure"
+      - "Manual: Run `npm start` - should start server"
+      - "Manual: Visit http://localhost:5000 - app should load"
+      - "Manual: Test login/signup flow"
+      - "Manual: Test core features (if possible without full env)"
+
+  - id: D1_T3_verify_environment_variables
+    title: "Verify all required environment variables are set in Replit"
+    type: chore
+    status: todo
+    priority: critical
+    description: >
+      Check that all required environment variables are present in Replit Secrets.
+      Document what's set and what might be missing. DO NOT change anything yet.
+    code_areas:
+      - "config: Replit Secrets"
+      - "docs: Environment variable requirements"
+    acceptance_criteria:
+      - "All required frontend vars are set (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY)"
+      - "All required backend vars are set (PORT, SUPABASE_SERVICE_ROLE_KEY)"
+      - "Optional vars are documented (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET)"
+      - "Missing vars are identified and documented"
+    tests:
+      - "Manual: Check Replit Secrets tab"
+      - "Manual: Verify VITE_SUPABASE_URL is set"
+      - "Manual: Verify VITE_SUPABASE_ANON_KEY is set"
+      - "Manual: Verify SUPABASE_SERVICE_ROLE_KEY is set"
+      - "Manual: Verify PORT is set (or defaults to 5000)"
+      - "Manual: Document any missing variables"
+
+  - id: D1_T4_review_replit_config
+    title: "Review and verify .replit deployment configuration"
+    type: chore
+    status: todo
+    priority: high
+    description: >
+      Review the existing .replit file to understand the deployment configuration.
+      Verify it matches our deployment plan. DO NOT modify unless absolutely necessary.
+    code_areas:
+      - "config: .replit"
+    acceptance_criteria:
+      - ".replit file is reviewed"
+      - "Deployment target is 'autoscale' (correct)"
+      - "Build command is 'npm run build' (correct)"
+      - "Run command is 'npm run start' (correct)"
+      - "Port configuration is correct (5000)"
+      - "No unexpected changes needed"
+    tests:
+      - "Manual: Read .replit file"
+      - "Manual: Verify deployment section matches plan"
+      - "Manual: Document any discrepancies"
+
+  # ============================================================================
+  # PHASE 2: Pre-Deployment Configuration (Minimal Changes)
+  # ============================================================================
+
+  - id: D1_T5_verify_oauth_callbacks
+    title: "Verify and update OAuth callback URLs if needed"
+    type: chore
+    status: todo
+    priority: high
+    description: >
+      Check Google OAuth callback URLs. If deploying to a new Replit URL, we'll need
+      to update the callback URL in Google Cloud Console. Get the deployment URL first.
+    code_areas:
+      - "config: Google Cloud Console"
+      - "config: OAuth redirect URIs"
+    acceptance_criteria:
+      - "Current OAuth callback URLs are documented"
+      - "New Replit deployment URL is obtained"
+      - "Callback URL is updated in Google Cloud Console (if needed)"
+      - "OAuth flow is tested after update"
+    tests:
+      - "Manual: Check Google Cloud Console → OAuth credentials"
+      - "Manual: Document current callback URLs"
+      - "Manual: Add new callback URL after deployment"
+      - "Manual: Test OAuth flow after deployment"
+
+  - id: D1_T6_verify_edge_functions
+    title: "Verify Supabase Edge Functions are deployed"
+    type: chore
+    status: todo
+    priority: high
+    description: >
+      Verify that all required Edge Functions are deployed to Supabase.
+      These should already be deployed via GitHub Actions, but verify.
+    code_areas:
+      - "infra: Supabase Edge Functions"
+    acceptance_criteria:
+      - "All required Edge Functions are deployed"
+      - "Edge Function secrets are set (OPENAI_API_KEY, etc.)"
+      - "Functions are accessible and responding"
+    tests:
+      - "Manual: Check Supabase Dashboard → Edge Functions"
+      - "Manual: Verify functions: extract-entities, generate-matches, transcribe-audio, etc."
+      - "Manual: Test function invocation (if possible)"
+
+  # ============================================================================
+  # PHASE 3: Deployment (Replit)
+  # ============================================================================
+
+  - id: D1_T7_create_deployment_branch
+    title: "Create deployment branch for safety"
+    type: chore
+    status: todo
+    priority: medium
+    description: >
+      Create a deployment branch from main/master. This allows us to rollback
+      easily if something goes wrong. We won't make code changes, but having
+      a branch is good practice.
+    code_areas:
+      - "git: branch management"
+    acceptance_criteria:
+      - "Deployment branch created from main/master"
+      - "Branch is pushed to remote"
+      - "Current branch is documented"
+    tests:
+      - "Manual: Create branch `deployment/replit-prod`"
+      - "Manual: Push branch to remote"
+      - "Manual: Verify branch exists"
+
+  - id: D1_T8_deploy_to_replit
+    title: "Deploy application to Replit production"
+    type: deployment
+    status: todo
+    priority: critical
+    description: >
+      Deploy the application using Replit's deployment feature. This uses the
+      existing .replit configuration. Replit will run `npm run build` and then
+      `npm start`. Monitor the deployment for any errors.
+    code_areas:
+      - "deploy: Replit autoscale"
+      - "config: .replit"
+    acceptance_criteria:
+      - "Deployment is initiated in Replit"
+      - "Build process completes successfully"
+      - "Application starts without errors"
+      - "Deployment URL is obtained"
+      - "Deployment logs show no errors"
+    tests:
+      - "Manual: Click 'Deploy' button in Replit (or use Deployments tab)"
+      - "Manual: Monitor build logs - should show 'npm run build' running"
+      - "Manual: Monitor start logs - should show 'npm start' running"
+      - "Manual: Verify 'serving on port 5000' message appears"
+      - "Manual: Copy deployment URL"
+      - "Manual: Document deployment URL"
+
+  - id: D1_T9_verify_deployment_health
+    title: "Verify deployment is healthy and accessible"
+    type: test
+    status: todo
+    priority: critical
+    description: >
+      After deployment, verify the application is accessible and healthy.
+      Check that the deployment URL works, SSL is active, and basic pages load.
+    code_areas:
+      - "deploy: Health checks"
+      - "deploy: SSL verification"
+    acceptance_criteria:
+      - "Deployment URL is accessible (HTTPS)"
+      - "SSL certificate is valid"
+      - "Home page loads without errors"
+      - "No console errors in browser"
+      - "API endpoints respond (if testable)"
+    tests:
+      - "Manual: Visit deployment URL in browser"
+      - "Manual: Verify HTTPS (lock icon)"
+      - "Manual: Check browser console for errors"
+      - "Manual: Test home page loads"
+      - "Manual: Test login page loads"
+
+  # ============================================================================
+  # PHASE 4: Post-Deployment Verification
+  # ============================================================================
+
+  - id: D1_T10_test_authentication
+    title: "Test authentication flows"
+    type: test
+    status: todo
+    priority: critical
+    description: >
+      Test user authentication flows to ensure they work in production.
+      Test signup, login, logout, and password reset if applicable.
+    code_areas:
+      - "feature: Authentication"
+      - "feature: Supabase Auth"
+    acceptance_criteria:
+      - "User signup works"
+      - "User login works"
+      - "User logout works"
+      - "Session persists correctly"
+      - "Protected routes are protected"
+    tests:
+      - "Manual: Test user signup with new email"
+      - "Manual: Test user login with existing account"
+      - "Manual: Test user logout"
+      - "Manual: Verify protected routes require auth"
+      - "Manual: Test session persistence (refresh page)"
+
+  - id: D1_T11_test_core_features
+    title: "Test core application features"
+    type: test
+    status: todo
+    priority: high
+    description: >
+      Test the core features of the application to ensure everything works
+      in production. This includes conversation recording, contact management,
+      matching, etc. Test as many features as possible.
+    code_areas:
+      - "feature: Conversation recording"
+      - "feature: Contact management"
+      - "feature: Matching"
+      - "feature: Edge Functions"
+    acceptance_criteria:
+      - "Conversation recording works (if testable)"
+      - "Contact CRUD operations work"
+      - "Matching generation works (if testable)"
+      - "Edge Functions are invoked successfully"
+      - "Real-time features work (if applicable)"
+    tests:
+      - "Manual: Test contact list page loads"
+      - "Manual: Test contact creation"
+      - "Manual: Test contact editing"
+      - "Manual: Test conversation history loads"
+      - "Manual: Test any other core features"
+
+  - id: D1_T12_test_oauth_integration
+    title: "Test Google OAuth integration (if applicable)"
+    type: test
+    status: todo
+    priority: medium
+    description: >
+      If Google Calendar integration is enabled, test the OAuth flow.
+      Verify the callback URL is correct and the flow completes successfully.
+    code_areas:
+      - "feature: Google OAuth"
+      - "feature: Google Calendar"
+    acceptance_criteria:
+      - "Google OAuth flow initiates correctly"
+      - "OAuth callback is received"
+      - "Tokens are stored correctly"
+      - "Calendar sync works (if testable)"
+    tests:
+      - "Manual: Test 'Connect Calendar' button (if present)"
+      - "Manual: Complete OAuth flow"
+      - "Manual: Verify callback URL matches deployment URL"
+      - "Manual: Test calendar sync (if applicable)"
+
+  - id: D1_T13_verify_environment_variables_production
+    title: "Verify environment variables work in production"
+    type: test
+    status: todo
+    priority: high
+    description: >
+      Verify that all environment variables are correctly loaded in production.
+      Check that Supabase connections work, API keys are valid, etc.
+    code_areas:
+      - "config: Environment variables"
+      - "config: Supabase connection"
+    acceptance_criteria:
+      - "Supabase connection works (no connection errors)"
+      - "Frontend can connect to Supabase"
+      - "Backend can connect to Supabase"
+      - "API keys are valid (no 401/403 errors)"
+    tests:
+      - "Manual: Check browser console for Supabase connection errors"
+      - "Manual: Check server logs for connection errors"
+      - "Manual: Verify data loads from Supabase"
+      - "Manual: Verify writes to Supabase work"
+
+  - id: D1_T14_performance_check
+    title: "Check production performance and load times"
+    type: test
+    status: todo
+    priority: medium
+    description: >
+      Check that the production deployment performs well. Verify load times
+      are acceptable and there are no obvious performance issues.
+    code_areas:
+      - "deploy: Performance"
+      - "deploy: Load times"
+    acceptance_criteria:
+      - "Initial page load is < 5 seconds"
+      - "No obvious performance issues"
+      - "Assets load correctly (CSS, JS, images)"
+      - "No 404 errors for assets"
+    tests:
+      - "Manual: Measure initial page load time"
+      - "Manual: Check Network tab for slow requests"
+      - "Manual: Verify all assets load (no 404s)"
+      - "Manual: Test on different browsers if possible"
+
+  # ============================================================================
+  # PHASE 5: Documentation & Cleanup
+  # ============================================================================
+
+  - id: D1_T15_document_deployment
+    title: "Document deployment details and URLs"
+    type: docs
+    status: todo
+    priority: medium
+    description: >
+      Document the deployment URL, configuration, and any important notes.
+      This helps with future deployments and troubleshooting.
+    code_areas:
+      - "docs: Deployment documentation"
+    acceptance_criteria:
+      - "Deployment URL is documented"
+      - "Deployment date/time is recorded"
+      - "Configuration notes are documented"
+      - "Any issues encountered are documented"
+    tests:
+      - "Manual: Update docs/WEB_DEPLOYMENT_PLAN.md with deployment URL"
+      - "Manual: Document deployment date"
+      - "Manual: Document any configuration changes made"
+
+  - id: D1_T16_setup_monitoring
+    title: "Set up basic monitoring and alerts (optional)"
+    type: chore
+    status: todo
+    priority: low
+    description: >
+      Set up basic monitoring for the deployment. Replit may have built-in
+      monitoring. Document how to check logs and monitor the deployment.
+    code_areas:
+      - "deploy: Monitoring"
+      - "deploy: Logging"
+    acceptance_criteria:
+      - "Monitoring setup is documented"
+      - "Log access is documented"
+      - "Alert setup is documented (if applicable)"
+    tests:
+      - "Manual: Document how to access Replit logs"
+      - "Manual: Document how to monitor deployment health"
+      - "Manual: Set up any available alerts"
+
+  # ============================================================================
+  # PHASE 6: Rollback Plan (If Needed)
+  # ============================================================================
+
+  - id: D1_T17_document_rollback_procedure
+    title: "Document rollback procedure"
+    type: docs
+    status: todo
+    priority: medium
+    description: >
+      Document how to rollback the deployment if something goes wrong.
+      This should be done BEFORE deployment, but can be updated after.
+    code_areas:
+      - "deploy: Rollback procedure"
+    acceptance_criteria:
+      - "Rollback procedure is documented"
+      - "Steps are clear and testable"
+      - "Rollback triggers are defined"
+    tests:
+      - "Manual: Document steps to rollback deployment"
+      - "Manual: Document how to revert to previous version"
+      - "Manual: Test rollback procedure (if safe to do so)"
+

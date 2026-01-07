@@ -1,0 +1,405 @@
+# yaml-language-server: $schema=./task-schema.json
+epic: F2_Hybrid_Matching_Engine
+feature: Embeddings_Pre_Filtering_Plus_GPT_Scoring
+context:
+  phase: 1
+  spec_refs:
+    - "Docs: docs/AI_ML_MATCHING_APPROACHES.md"
+    - "Docs: docs/EMBEDDINGS_EXPLAINED.md"
+    - "Docs: docs/MATCHING_ENGINE_V2_DESIGN.md"
+    - "Docs: docs/CURRENT_MATCHING_SYSTEM.md"
+  notes: >
+    Implement hybrid matching approach using Supabase Edge Functions and existing infrastructure.
+    Use embeddings for semantic pre-filtering to find top 50 similar contacts, then send only
+    those to GPT for final scoring and explanation. This removes the 100 contact limit, reduces
+    GPT costs by ~50%, and improves scalability. Leverages existing Supabase embedding infrastructure
+    (bio_embedding, thesis_embedding, entity_embedding). No GCP infrastructure required - uses
+    Supabase Edge Functions (Deno), Supabase PostgreSQL database, and OpenAI API directly.
+defaults:
+  status: todo
+  priority: high
+  owner: engineering
+  envs: [dev, staging, prod]
+
+tasks:
+  # ============================================================================
+  # PHASE 1: Core Hybrid Matching Implementation
+  # ============================================================================
+
+  - id: F2_T1_add_cosine_similarity_function
+    title: "Add cosine similarity utility function to generate-matches"
+    type: feature
+    status: todo
+    priority: high
+    description: >
+      Add a cosine similarity function to calculate similarity between conversation embedding
+      and contact embeddings. This is the core math for semantic pre-filtering.
+    code_areas:
+      - "supabase/functions/generate-matches/index.ts"
+    acceptance_criteria:
+      - "Function calculates cosine similarity between two embedding vectors"
+      - "Returns value between -1 and 1 (1.0 = identical, 0.8+ = very similar)"
+      - "Handles edge cases (empty vectors, null values)"
+      - "Function is well-documented with comments"
+    tests:
+      - "Unit: Test cosine similarity with known vectors"
+      - "Unit: Test edge cases (empty, null, different lengths)"
+      - "Unit: Test that identical vectors return 1.0"
+      - "Unit: Test that orthogonal vectors return 0.0"
+
+  - id: F2_T2_get_conversation_embedding
+    title: "Retrieve or generate conversation entity embedding"
+    type: feature
+    status: todo
+    priority: high
+    description: >
+      In generate-matches, check if conversation has entity_embedding cached. If not, call
+      embed-conversation-entities to generate it. Use cached embedding for pre-filtering.
+    code_areas:
+      - "supabase/functions/generate-matches/index.ts"
+      - "supabase/functions/embed-conversation-entities/index.ts"
+    dependencies:
+      - "F2_T1_add_cosine_similarity_function"
+    acceptance_criteria:
+      - "Checks conversations.entity_embedding field first"
+      - "If missing, calls embed-conversation-entities function"
+      - "Caches embedding in conversations table for future use"
+      - "Handles errors gracefully (falls back to GPT-only if embedding fails)"
+      - "Logs embedding retrieval/generation for debugging"
+    tests:
+      - "Unit: Test retrieval of cached embedding"
+      - "Unit: Test generation of new embedding when missing"
+      - "Unit: Test error handling when embedding generation fails"
+      - "Integration: Test with real conversation that has entities"
+
+  - id: F2_T3_implement_semantic_prefiltering
+    title: "Implement semantic pre-filtering using embeddings"
+    type: feature
+    status: todo
+    priority: high
+    description: >
+      Calculate cosine similarity between conversation embedding and all contact embeddings
+      (bio_embedding or thesis_embedding). Sort by similarity and select top 50 contacts.
+      This replaces the arbitrary 100 contact limit with intelligent pre-filtering.
+    code_areas:
+      - "supabase/functions/generate-matches/index.ts"
+    dependencies:
+      - "F2_T1_add_cosine_similarity_function"
+      - "F2_T2_get_conversation_embedding"
+    acceptance_criteria:
+      - "Fetches all contacts with bio_embedding or thesis_embedding"
+      - "Calculates similarity for each contact"
+      - "Uses thesis_embedding if available, falls back to bio_embedding"
+      - "Sorts contacts by similarity (highest first)"
+      - "Selects top 50 contacts for GPT scoring"
+      - "Handles contacts without embeddings (includes them in GPT scoring as fallback)"
+      - "Logs pre-filtering results (similarity scores, contact count)"
+    tests:
+      - "Unit: Test similarity calculation for multiple contacts"
+      - "Unit: Test sorting by similarity"
+      - "Unit: Test top 50 selection"
+      - "Unit: Test fallback for contacts without embeddings"
+      - "Integration: Test with real contacts and conversation"
+
+  - id: F2_T4_update_gpt_scoring_for_prefiltered
+    title: "Update GPT scoring to use pre-filtered contacts"
+    type: feature
+    status: todo
+    priority: high
+    description: >
+      Modify GPT scoring logic to use pre-filtered contacts (top 50) instead of first 100.
+      Update system prompt to mention that contacts are pre-filtered by semantic similarity.
+      Maintain backward compatibility (if no embeddings, use original logic).
+    code_areas:
+      - "supabase/functions/generate-matches/index.ts"
+    dependencies:
+      - "F2_T3_implement_semantic_prefiltering"
+    acceptance_criteria:
+      - "Uses pre-filtered contacts (top 50) instead of first 100"
+      - "Maintains original logic as fallback (if no embeddings available)"
+      - "GPT prompt mentions semantic pre-filtering in context"
+      - "Removes hard-coded 100 contact limit"
+      - "Logs number of contacts sent to GPT"
+    tests:
+      - "Unit: Test GPT scoring with pre-filtered contacts"
+      - "Unit: Test fallback to original logic when no embeddings"
+      - "Integration: Test end-to-end with real data"
+
+  - id: F2_T5_combine_embedding_gpt_scores
+    title: "Combine embedding similarity with GPT scores"
+    type: feature
+    status: todo
+    priority: medium
+    description: >
+      Weighted combination of embedding similarity (30%) and GPT score (70%) for final match
+      score. This provides more nuanced scoring that leverages both semantic similarity and
+      GPT's reasoning.
+    code_areas:
+      - "supabase/functions/generate-matches/index.ts"
+    dependencies:
+      - "F2_T4_update_gpt_scoring_for_prefiltered"
+    acceptance_criteria:
+      - "Stores embedding similarity score with each match"
+      - "Calculates final score: 0.7 * GPT_score + 0.3 * embedding_similarity"
+      - "Updates match_suggestions table with semantic_similarity field"
+      - "Maintains GPT score separately for explainability"
+      - "Handles cases where embedding similarity is missing"
+    tests:
+      - "Unit: Test score combination formula"
+      - "Unit: Test with missing embedding similarity"
+      - "Integration: Test that combined scores are stored correctly"
+
+  # ============================================================================
+  # PHASE 2: Database Schema Updates
+  # ============================================================================
+
+  - id: F2_T6_verify_semantic_similarity_field
+    title: "Verify semantic_similarity field exists and is accessible"
+    type: chore
+    status: todo
+    priority: medium
+    description: >
+      Verify that semantic_similarity field exists in match_suggestions table (from migration
+      20250201000000_add_matching_v2_fields.sql). Ensure schema.ts and helpers are updated.
+    code_areas:
+      - "supabase/migrations/20250201000000_add_matching_v2_fields.sql"
+      - "shared/schema.ts"
+      - "client/src/lib/supabaseHelpers.ts"
+    dependencies:
+      - "F2_T5_combine_embedding_gpt_scores"
+    acceptance_criteria:
+      - "Verify semantic_similarity DECIMAL(5,4) column exists in database"
+      - "Schema.ts includes semantic_similarity field in MatchSuggestion type"
+      - "supabaseHelpers.ts handles semantic_similarity in matchFromDb"
+      - "Migration has been applied (check database)"
+    tests:
+      - "Manual: Verify column exists in Supabase Dashboard"
+      - "Unit: Test schema types include semantic_similarity"
+      - "Unit: Test helper functions handle new field"
+
+  # ============================================================================
+  # PHASE 3: Name Matching Improvements
+  # ============================================================================
+
+  - id: F2_T7_improve_name_matching_with_nicknames
+    title: "Add nickname matching to name matching logic"
+    type: feature
+    status: todo
+    priority: medium
+    description: >
+      Enhance name matching to handle common nicknames (Matt/Matthew, Mike/Michael, etc.).
+      Use nickname mapping from MATCHING_LOGIC.md. This improves matching when contacts
+      are mentioned by nickname in conversations.
+    code_areas:
+      - "supabase/functions/generate-matches/index.ts"
+    spec_refs:
+      - "Docs: docs/MATCHING_LOGIC.md (nickname mapping section)"
+      - "Docs: docs/NAME_MATCHING_LIMITATIONS.md"
+    acceptance_criteria:
+      - "Implements nickname mapping (Matt→Matthew, Mike→Michael, etc.)"
+      - "Handles bidirectional matching (Matt matches Matthew, Matthew matches Matt)"
+      - "Maintains existing name matching logic as fallback"
+      - "Logs nickname matches for debugging"
+      - "Covers common nicknames from MATCHING_LOGIC.md"
+    tests:
+      - "Unit: Test Matt matches Matthew"
+      - "Unit: Test Mike matches Michael"
+      - "Unit: Test Bob matches Robert"
+      - "Unit: Test bidirectional matching"
+      - "Integration: Test with real conversation mentioning nickname"
+
+  # ============================================================================
+  # PHASE 4: Explainability & Logging
+  # ============================================================================
+
+  - id: F2_T8_add_detailed_matching_metadata
+    title: "Add detailed matching metadata to match_suggestions"
+    type: feature
+    status: todo
+    priority: low
+    description: >
+      Store detailed matching information: which entities matched, embedding similarity,
+      GPT reasoning, etc. This enables better explainability in the UI.
+    code_areas:
+      - "supabase/functions/generate-matches/index.ts"
+      - "supabase/migrations/"
+      - "shared/schema.ts"
+    dependencies:
+      - "F2_T6_add_semantic_similarity_field"
+    acceptance_criteria:
+      - "Stores matching_details JSONB field with breakdown"
+      - "Includes: embedding_similarity, gpt_score, entity_matches, contact_field_matches"
+      - "Schema updated to include matching_details field"
+      - "Migration adds field to match_suggestions table"
+    tests:
+      - "Unit: Test matching_details structure"
+      - "Integration: Test that metadata is stored correctly"
+
+  - id: F2_T9_improve_logging_for_debugging
+    title: "Add comprehensive logging for hybrid matching"
+    type: chore
+    status: todo
+    priority: low
+    description: >
+      Add detailed logging throughout the hybrid matching process: embedding retrieval,
+      similarity calculations, pre-filtering results, GPT scoring, final scores.
+      This helps debug issues and understand matching behavior.
+    code_areas:
+      - "supabase/functions/generate-matches/index.ts"
+    acceptance_criteria:
+      - "Logs conversation embedding retrieval/generation"
+      - "Logs similarity calculations (top 10 scores)"
+      - "Logs pre-filtering results (contacts before/after)"
+      - "Logs GPT scoring input/output"
+      - "Logs final match scores and reasoning"
+      - "Logs timing information (embedding time, GPT time, total time)"
+    tests:
+      - "Manual: Review logs for a test conversation"
+      - "Manual: Verify all key steps are logged"
+
+  # ============================================================================
+  # PHASE 5: Error Handling & Edge Cases
+  # ============================================================================
+
+  - id: F2_T10_handle_missing_embeddings_gracefully
+    title: "Handle missing embeddings gracefully with fallback"
+    type: feature
+    status: todo
+    priority: high
+    description: >
+      If conversation or contact embeddings are missing, fall back to original GPT-only
+      matching logic. Don't fail the entire matching process. Log warnings for missing
+      embeddings to identify contacts/conversations that need embedding generation.
+    code_areas:
+      - "supabase/functions/generate-matches/index.ts"
+    dependencies:
+      - "F2_T3_implement_semantic_prefiltering"
+    acceptance_criteria:
+      - "Falls back to GPT-only if conversation embedding missing"
+      - "Falls back to GPT-only if no contact embeddings available"
+      - "Logs warnings for missing embeddings"
+      - "Still processes contacts without embeddings (includes in GPT scoring)"
+      - "Does not fail entire matching process"
+    tests:
+      - "Unit: Test fallback when conversation embedding missing"
+      - "Unit: Test fallback when no contact embeddings"
+      - "Unit: Test mixed scenario (some contacts have embeddings, some don't)"
+      - "Integration: Test with real data missing embeddings"
+
+  - id: F2_T11_handle_large_contact_lists
+    title: "Optimize for large contact lists (1000+ contacts)"
+    type: feature
+    status: todo
+    priority: medium
+    description: >
+      Optimize similarity calculations for large contact lists in Supabase Edge Function.
+      Use efficient vector operations (no nested loops). Ensure performance remains good
+      even with 1000+ contacts. All processing happens in Edge Function (Deno runtime).
+      Consider pgvector extension for PostgreSQL if needed (future optimization).
+    code_areas:
+      - "supabase/functions/generate-matches/index.ts"
+    dependencies:
+      - "F2_T3_implement_semantic_prefiltering"
+    acceptance_criteria:
+      - "Handles 1000+ contacts efficiently (<5 seconds for similarity calculation)"
+      - "Uses efficient vector operations (no nested loops, vectorized math)"
+      - "All processing in Supabase Edge Function (no external services)"
+      - "Logs performance metrics (contact count, calculation time)"
+      - "Works within Edge Function timeout limits (60 seconds)"
+    tests:
+      - "Performance: Test with 1000 contacts in Edge Function"
+      - "Performance: Test with 5000 contacts in Edge Function"
+      - "Unit: Verify no performance regressions"
+      - "Integration: Test within Edge Function timeout limits"
+
+  # ============================================================================
+  # PHASE 6: Testing & Validation
+  # ============================================================================
+
+  - id: F2_T12_create_test_script_for_hybrid_matching
+    title: "Create test script to validate hybrid matching"
+    type: test
+    status: todo
+    priority: medium
+    description: >
+      Create comprehensive test script that validates hybrid matching end-to-end:
+      embedding retrieval, pre-filtering, GPT scoring, score combination, result storage.
+    code_areas:
+      - "scripts/test-hybrid-matching.sh"
+      - "docs/HYBRID_MATCHING_TEST_SCRIPT.md"
+    acceptance_criteria:
+      - "Tests embedding retrieval/generation"
+      - "Tests similarity calculations"
+      - "Tests pre-filtering (top 50 selection)"
+      - "Tests GPT scoring with pre-filtered contacts"
+      - "Tests score combination"
+      - "Tests error handling and fallbacks"
+      - "Includes test data (sample conversation, sample contacts)"
+    tests:
+      - "Manual: Run test script, verify all steps pass"
+      - "Manual: Test with real conversation data"
+
+  - id: F2_T13_validate_cost_reduction
+    title: "Validate cost reduction from hybrid approach"
+    type: test
+    status: todo
+    priority: low
+    description: >
+      Measure actual cost reduction: compare GPT token usage before (100 contacts) vs after
+      (50 pre-filtered contacts). Verify ~50% cost reduction is achieved.
+    code_areas:
+      - "docs/HYBRID_MATCHING_COST_ANALYSIS.md"
+    acceptance_criteria:
+      - "Documents token usage before (100 contacts)"
+      - "Documents token usage after (50 contacts)"
+      - "Calculates cost per conversation"
+      - "Validates ~50% cost reduction"
+      - "Includes real examples from test runs"
+    tests:
+      - "Manual: Run matching before/after, compare token usage"
+      - "Manual: Calculate cost savings"
+
+  # ============================================================================
+  # PHASE 7: Documentation
+  # ============================================================================
+
+  - id: F2_T14_update_matching_system_docs
+    title: "Update matching system documentation for hybrid approach"
+    type: docs
+    status: todo
+    priority: low
+    description: >
+      Update CURRENT_MATCHING_SYSTEM.md and other docs to reflect hybrid approach.
+      Document the new flow, explain pre-filtering, update limitations section.
+    code_areas:
+      - "docs/CURRENT_MATCHING_SYSTEM.md"
+      - "docs/PROCESS_CONVERSATION_PIPELINE.md"
+    acceptance_criteria:
+      - "Documents hybrid matching flow (embeddings → GPT)"
+      - "Explains pre-filtering step"
+      - "Updates limitations (removes 100 contact limit)"
+      - "Documents new fields (semantic_similarity, matching_details)"
+      - "Includes cost analysis"
+    tests:
+      - "Manual: Review documentation for accuracy"
+      - "Manual: Verify all new features are documented"
+
+  - id: F2_T15_create_hybrid_matching_guide
+    title: "Create guide for understanding hybrid matching"
+    type: docs
+    status: todo
+    priority: low
+    description: >
+      Create user-facing or developer guide explaining how hybrid matching works,
+      why it's better, and how to interpret results.
+    code_areas:
+      - "docs/HYBRID_MATCHING_GUIDE.md"
+    acceptance_criteria:
+      - "Explains embeddings pre-filtering in simple terms"
+      - "Explains GPT scoring step"
+      - "Explains score combination"
+      - "Includes examples of matching results"
+      - "Explains how to interpret semantic_similarity scores"
+    tests:
+      - "Manual: Review guide for clarity"
+

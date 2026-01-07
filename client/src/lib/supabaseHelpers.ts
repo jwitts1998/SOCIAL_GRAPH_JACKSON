@@ -2,7 +2,7 @@
  * Serialization helpers to convert between Supabase snake_case and TypeScript camelCase
  */
 
-import type { Contact, Conversation, Profile, UserPreferences, ConversationSegment, MatchSuggestion, CalendarEvent } from '@shared/schema';
+import type { Contact, Conversation, Profile, UserPreferences, ConversationSegment, MatchSuggestion, CalendarEvent, ConversationEntity } from '@shared/schema';
 
 // ============================================================================
 // CONTACTS
@@ -48,6 +48,9 @@ export function contactFromDb(dbRow: any): Contact {
     isFamilyOffice: dbRow.is_family_office ?? false,
     investmentTypes: dbRow.investment_types,
     avgCheckSize: dbRow.avg_check_size,
+    bio: dbRow.bio,
+    bioEmbedding: dbRow.bio_embedding,
+    thesisEmbedding: dbRow.thesis_embedding,
     createdAt: new Date(dbRow.created_at),
     updatedAt: new Date(dbRow.updated_at),
   };
@@ -150,6 +153,8 @@ export function conversationFromDb(dbRow: any): Conversation {
     durationSeconds: dbRow.duration_seconds,
     recordedAt: new Date(dbRow.recorded_at),
     status: dbRow.status,
+    summary: dbRow.summary,
+    entityEmbedding: dbRow.entity_embedding || null,
     createdAt: new Date(dbRow.created_at),
   };
 }
@@ -193,6 +198,22 @@ export function segmentToDb(segment: Partial<ConversationSegment>): any {
   if (segment.text !== undefined) dbRow.text = segment.text;
   
   return dbRow;
+}
+
+// ============================================================================
+// CONVERSATION ENTITIES
+// ============================================================================
+
+export function conversationEntityFromDb(dbRow: any): ConversationEntity {
+  return {
+    id: dbRow.id,
+    conversationId: dbRow.conversation_id,
+    entityType: dbRow.entity_type,
+    value: dbRow.value,
+    confidence: dbRow.confidence ? parseFloat(dbRow.confidence) : null,
+    contextSnippet: dbRow.context_snippet,
+    createdAt: new Date(dbRow.created_at),
+  };
 }
 
 // ============================================================================
@@ -260,6 +281,11 @@ export function matchFromDb(dbRow: any): MatchSuggestion {
     score: dbRow.score,
     reasons: dbRow.reasons,
     justification: dbRow.justification,
+    confidence: dbRow.confidence || null,
+    semanticSimilarity: dbRow.semantic_similarity || null,
+    matchingDetails: dbRow.matching_details || null,
+    entityMatches: dbRow.entity_matches || null,
+    contactFieldMatches: dbRow.contact_field_matches || null,
     status: dbRow.status,
     promiseStatus: dbRow.promise_status,
     promisedAt: dbRow.promised_at ? new Date(dbRow.promised_at) : null,

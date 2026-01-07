@@ -84,6 +84,11 @@ export const contacts = pgTable("contacts", {
   investmentTypes: text("investment_types").array().default(sql`ARRAY[]::text[]`), // 'fund', 'direct', 'co-invest'
   avgCheckSize: integer("avg_check_size"),
   
+  // Embedding fields for semantic matching
+  bio: text("bio"), // Contact biography/description
+  bioEmbedding: text("bio_embedding"), // Cached embedding vector (JSON array as text)
+  thesisEmbedding: text("thesis_embedding"), // Cached embedding vector (JSON array as text)
+  
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -141,6 +146,8 @@ export const conversations = pgTable("conversations", {
   durationSeconds: integer("duration_seconds"),
   recordedAt: timestamp("recorded_at").notNull().defaultNow(),
   status: text("status").notNull().default('completed'),
+  summary: text("summary"),
+  entityEmbedding: text("entity_embedding"), // Cached embedding for conversation entities (JSON array as text)
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -181,11 +188,52 @@ export const matchSuggestions = pgTable("match_suggestions", {
   score: integer("score").notNull(),
   reasons: jsonb("reasons").notNull().default(sql`'[]'::jsonb`),
   justification: text("justification"),
+  confidence: decimal("confidence", { precision: 3, scale: 2 }), // GPT confidence score (0.0-1.0)
+  semanticSimilarity: decimal("semantic_similarity", { precision: 5, scale: 4 }), // Embedding-based similarity (0.0-1.0)
+  matchingDetails: jsonb("matching_details"), // Detailed matching breakdown
+  entityMatches: jsonb("entity_matches"), // Which entities matched which contact fields
+  contactFieldMatches: jsonb("contact_field_matches"), // Detailed field-level matching
   status: text("status").notNull().default('pending'), // 'pending' | 'promised' | 'intro_made'
   promiseStatus: text("promise_status").default('general'), // 'general' | 'promised'
   promisedAt: timestamp("promised_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Match history table for tracking match evolution over time
+export const matchHistory = pgTable("match_history", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  matchSuggestionId: varchar("match_suggestion_id").references(() => matchSuggestions.id, { onDelete: 'cascade' }),
+  conversationId: varchar("conversation_id").notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+  contactId: varchar("contact_id").notNull().references(() => contacts.id, { onDelete: 'cascade' }),
+  score: integer("score").notNull(),
+  confidence: decimal("confidence", { precision: 3, scale: 2 }),
+  semanticSimilarity: decimal("semantic_similarity", { precision: 5, scale: 4 }),
+  matchingDetails: jsonb("matching_details"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// ============================================================================
+// CONVERSATION TASKS
+// ============================================================================
+
+export const conversationTasks = pgTable("conversation_tasks", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  conversationId: varchar("conversation_id").notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+  taskType: text("task_type").notNull(), // user_action, other_commitment, create_contact, etc.
+  title: text("title").notNull(),
+  description: text("description"),
+  assignedTo: text("assigned_to").notNull(), // 'user' | 'other_participant' | 'system'
+  otherParticipantName: text("other_participant_name"), // If assigned_to is 'other_participant'
+  status: text("status").notNull().default('pending'), // 'pending' | 'in_progress' | 'completed' | 'archived'
+  priority: text("priority").default('medium'), // 'low' | 'medium' | 'high'
+  dueDate: timestamp("due_date"),
+  linkedContactId: varchar("linked_contact_id").references(() => contacts.id, { onDelete: 'set null' }), // For create_contact tasks
+  createdBy: text("created_by").notNull().default('system'), // 'system' | 'user'
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  completedAt: timestamp("completed_at"),
+  archivedAt: timestamp("archived_at"),
 });
 
 // ============================================================================
@@ -305,6 +353,12 @@ export const insertMatchSuggestionSchema = createInsertSchema(matchSuggestions).
   updatedAt: true,
 });
 
+export const insertConversationTaskSchema = createInsertSchema(conversationTasks).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export const insertIntroductionThreadSchema = createInsertSchema(introductionThreads).omit({
   id: true,
   createdAt: true,
@@ -361,6 +415,9 @@ export type InsertConversationEntity = z.infer<typeof insertConversationEntitySc
 
 export type MatchSuggestion = typeof matchSuggestions.$inferSelect;
 export type InsertMatchSuggestion = z.infer<typeof insertMatchSuggestionSchema>;
+
+export type ConversationTask = typeof conversationTasks.$inferSelect;
+export type InsertConversationTask = z.infer<typeof insertConversationTaskSchema>;
 
 export type IntroductionThread = typeof introductionThreads.$inferSelect;
 export type InsertIntroductionThread = z.infer<typeof insertIntroductionThreadSchema>;

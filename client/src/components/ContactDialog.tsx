@@ -213,7 +213,8 @@ export default function ContactDialog({ open, onOpenChange, contact }: ContactDi
   useEffect(() => {
     const subscription = form.watch((value, { name }) => {
       if (name === 'contactType') {
-        const shouldBeInvestor = hasInvestorType(value.contactType || []);
+        const contactTypes = (value.contactType || []).filter((type): type is NonNullable<typeof type> => type !== undefined);
+        const shouldBeInvestor = hasInvestorType(contactTypes);
         form.setValue('isInvestor', shouldBeInvestor);
       }
     });
@@ -555,14 +556,14 @@ export default function ContactDialog({ open, onOpenChange, contact }: ContactDi
                         <FormItem>
                           <FormLabel>Contact Type (select all that apply)</FormLabel>
                           <div className="grid grid-cols-3 gap-2">
-                            {[
-                              { value: 'LP', label: 'LP' },
-                              { value: 'GP', label: 'GP' },
-                              { value: 'Angel', label: 'Angel' },
-                              { value: 'FamilyOffice', label: 'Family Office' },
-                              { value: 'Startup', label: 'Startup' },
-                              { value: 'Other', label: 'Other' },
-                            ].map((type) => {
+                            {([
+                              { value: 'LP' as const, label: 'LP' },
+                              { value: 'GP' as const, label: 'GP' },
+                              { value: 'Angel' as const, label: 'Angel' },
+                              { value: 'FamilyOffice' as const, label: 'Family Office' },
+                              { value: 'Startup' as const, label: 'Startup' },
+                              { value: 'Other' as const, label: 'Other' },
+                            ] as const).map((type) => {
                               const isSelected = field.value?.includes(type.value);
                               return (
                                 <Button

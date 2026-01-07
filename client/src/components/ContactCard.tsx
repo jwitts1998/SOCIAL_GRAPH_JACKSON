@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Building2, Edit, DollarSign, TrendingUp, Users, Calendar, Sparkles, Mail, Linkedin, MapPin, Phone, Tag, Twitter as TwitterIcon, Info } from "lucide-react";
+import { Building2, Edit, DollarSign, TrendingUp, Users, Calendar, Sparkles, Mail, Linkedin, MapPin, Phone, Tag, Twitter as TwitterIcon, Info, Brain, AlertCircle, Loader2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -10,6 +10,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import EnrichmentDialog from "@/components/EnrichmentDialog";
 import RoleTag from "@/components/RoleTag";
 import { formatCheckSizeRange } from "@/lib/currencyFormat";
+import { embedContact } from "@/lib/edgeFunctions";
+import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/lib/supabase";
 
 interface ContactCardProps {
   id: string;
@@ -89,7 +92,54 @@ export default function ContactCard({
   checkSizeMin,
   checkSizeMax,
   investorNotes,
+  bio,
+  bioEmbedding,
+  thesisEmbedding,
 }: ContactCardProps) {
+  const { toast } = useToast();
+  const [isEmbedding, setIsEmbedding] = useState(false);
+  
+  // Check embedding status
+  const hasBioEmbedding = !!bioEmbedding;
+  const hasThesisEmbedding = !!thesisEmbedding;
+  const hasAnyEmbedding = hasBioEmbedding || hasThesisEmbedding;
+  
+  // Check what's needed for embeddings
+  const hasBioData = !!(bio || role || org); // Bio embedding uses bio + title (role) + company (org)
+  const hasThesisData = !!investorNotes; // Thesis embedding uses investor_notes
+  const canGenerateEmbedding = hasBioData || hasThesisData;
+  
+  const handleGenerateEmbedding = async () => {
+    if (!canGenerateEmbedding) {
+      toast({
+        title: "Cannot generate embedding",
+        description: "Add bio, title, company, or investor notes to generate embeddings",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setIsEmbedding(true);
+    try {
+      const result = await embedContact(id);
+      toast({
+        title: "Embedding generated!",
+        description: `Generated embeddings for ${fullName}. ${result.hasBioEmbedding ? 'Bio embedding ✓' : ''} ${result.hasThesisEmbedding ? 'Thesis embedding ✓' : ''}`,
+      });
+      
+      // Refresh the contact data
+      window.location.reload(); // Simple refresh for now
+    } catch (error) {
+      console.error('Embedding error:', error);
+      toast({
+        title: "Failed to generate embedding",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setIsEmbedding(false);
+    }
+  };
   const [showEnrichDialog, setShowEnrichDialog] = useState(false);
   
   const hasCompanyInfo = !!(companyAddress || companyEmployees || companyFounded || companyUrl || 
@@ -115,6 +165,85 @@ export default function ContactCard({
             </div>
           </div>
           <div className="flex gap-1">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  title="Embedding status"
+                  data-testid="button-embedding-status"
+                >
+                  <Brain className={`w-4 h-4 ${hasAnyEmbedding ? 'text-green-500' : 'text-muted-foreground'}`} />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80">
+                <div className="space-y-3">
+                  <div className="font-semibold">Embedding Status</div>
+                  
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-center justify-between">
+                      <span>Bio Embedding:</span>
+                      {hasBioEmbedding ? (
+                        <Badge variant="outline" className="bg-green-50 text-green-700">✓ Generated</Badge>
+                      ) : (
+                        <Badge variant="outline" className="bg-gray-50 text-gray-600">
+                          {hasBioData ? 'Ready' : 'Missing data'}
+                        </Badge>
+                      )}
+                    </div>
+                    {!hasBioData && (
+                      <div className="text-xs text-muted-foreground ml-2">
+                        Needs: bio, title, or company
+                      </div>
+                    )}
+                    
+                    <div className="flex items-center justify-between">
+                      <span>Thesis Embedding:</span>
+                      {hasThesisEmbedding ? (
+                        <Badge variant="outline" className="bg-green-50 text-green-700">✓ Generated</Badge>
+                      ) : (
+                        <Badge variant="outline" className="bg-gray-50 text-gray-600">
+                          {hasThesisData ? 'Ready' : 'Missing data'}
+                        </Badge>
+                      )}
+                    </div>
+                    {!hasThesisData && (
+                      <div className="text-xs text-muted-foreground ml-2">
+                        Needs: investor notes
+                      </div>
+                    )}
+                  </div>
+                  
+                  {canGenerateEmbedding && (
+                    <Button
+                      size="sm"
+                      onClick={handleGenerateEmbedding}
+                      disabled={isEmbedding}
+                      className="w-full"
+                    >
+                      {isEmbedding ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <Brain className="w-4 h-4 mr-2" />
+                          Generate Embedding
+                        </>
+                      )}
+                    </Button>
+                  )}
+                  
+                  {!canGenerateEmbedding && (
+                    <div className="text-xs text-muted-foreground flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                      <span>Add bio, title, company, or investor notes to enable embedding generation</span>
+                    </div>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
             <Popover>
               <PopoverTrigger asChild>
                 <Button

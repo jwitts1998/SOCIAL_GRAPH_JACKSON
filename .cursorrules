@@ -1,0 +1,251 @@
+# Cursor Rules for Social Graph Connector
+
+## Repository Overview
+
+This is a **full-stack TypeScript application** for VCs/investors to identify introductions from conversations. It uses React + Vite (frontend), Express (minimal backend), Supabase (database + auth + edge functions), and OpenAI (AI operations).
+
+**Key Principle**: Frontend accesses Supabase directly via SDK (no Express API layer). Express only handles OAuth routing.
+
+## Coding Conventions
+
+### TypeScript
+- **Strict mode**: Always enabled (`strict: true` in tsconfig.json)
+- **Type everything**: Avoid `any`, use proper types from `shared/schema.ts`
+- **Import paths**: Use `@/` for client code, `@shared/` for shared code
+- **File naming**: PascalCase for components (`ContactCard.tsx`), camelCase for utilities (`useContacts.ts`)
+
+### React Patterns
+- **Functional components only**: No class components
+- **Hooks**: Custom hooks in `client/src/hooks/` for data fetching
+- **Context**: Use sparingly (only `AuthContext` currently)
+- **State**: TanStack Query for server state, `useState` for local state
+- **Props**: Define interfaces for component props, export types
+
+### File Structure
+```
+client/src/
+  components/     # Reusable UI components
+    ui/          # shadcn/ui primitives (don't modify directly)
+  pages/         # Route-level components
+  hooks/         # Custom React hooks
+  contexts/      # React contexts
+  lib/           # Utilities (supabase client, helpers)
+```
+
+### Database Access
+- **Always use Supabase SDK**: `supabase.from('table').select()`
+- **Never use Drizzle queries**: Drizzle is only for schema definition
+- **RLS is enforced**: Don't bypass RLS, test with different users
+- **Service role**: Only in Edge Functions, never in frontend
+
+### Edge Functions
+- **Always validate ownership**: Check `owned_by_profile` matches authenticated user
+- **Use service role**: `createClient(url, serviceRoleKey)` for admin operations
+- **Error handling**: Return proper HTTP status codes (400, 401, 403, 500)
+- **Logging**: Use `console.log` for debugging (view in Supabase Dashboard)
+
+## Do Not Touch Zones
+
+### ⚠️ Critical Security Areas
+1. **`server/routes/google-auth.ts`**: OAuth flow - always validate JWT before processing
+2. **Edge Functions**: Always verify user ownership before accessing data
+3. **RLS policies**: Never disable RLS, always test with multiple users
+4. **Service role key**: Never expose to frontend, only use in Edge Functions
+
+### 🔒 Protected Files
+- **`shared/schema.ts`**: Database schema - changes require migrations
+- **`supabase/migrations/*.sql`**: Never modify existing migrations, only add new ones
+- **`client/src/lib/supabase.ts`**: Supabase client initialization - only change if adding new config
+
+### 🎨 Design System
+- **`design_guidelines.md`**: Follow design principles (Linear/Granola inspired)
+- **`client/src/components/ui/`**: shadcn/ui components - don't modify directly, extend if needed
+- **Tailwind classes**: Use existing design tokens, maintain consistency
+
+## Preferred Patterns
+
+### Adding a New Page
+1. Create component in `client/src/pages/PageName.tsx`
+2. Add route in `client/src/App.tsx` Router component
+3. Wrap with `<ProtectedRoute>` if authentication required
+4. Add navigation item in `AppSidebar` if needed
+5. Follow existing page patterns (see `Home.tsx`, `Contacts.tsx`)
+
+### Adding a New Hook
+1. Create file `client/src/hooks/useFeatureName.ts`
+2. Use TanStack Query for data fetching: `useQuery`, `useMutation`
+3. Return typed data: `{ data, isLoading, error }`
+4. Follow existing patterns (see `useContacts.ts`, `useConversations.ts`)
+
+### Adding a New Edge Function
+1. Create `supabase/functions/function-name/index.ts`
+2. **First line**: Validate JWT and user ownership
+3. Use service role client: `createClient(url, serviceRoleKey)`
+4. Validate input with Zod schemas
+5. Return proper HTTP responses: `new Response(JSON.stringify(data), { status: 200 })`
+6. Deploy: `supabase functions deploy function-name`
+7. Add invocation helper in `client/src/lib/edgeFunctions.ts`
+
+### Adding a Database Table
+1. Add table definition to `shared/schema.ts` (Drizzle ORM)
+2. Create migration: `supabase migration new table_name`
+3. Write SQL in migration file (include RLS policies)
+4. Test locally: `supabase db push`
+5. Push to production: `supabase db push` (or manual SQL in dashboard)
+
+### Error Handling
+- **Frontend**: Use try/catch, show toast notifications via `useToast()`
+- **Edge Functions**: Return proper HTTP status codes, log errors
+- **Database**: RLS will return errors automatically, handle in UI
+
+## Testing Expectations
+
+### Current State
+- ❌ No unit tests (add when fixing bugs or adding features)
+- ❌ No integration tests
+- ❌ No E2E tests (user mentioned `run_test` tool for Playwright)
+
+### When to Add Tests
+- **Bug fixes**: Add test to prevent regression
+- **New features**: Add tests for critical paths (auth, payments, data mutations)
+- **Edge Functions**: Test with different user contexts (ownership validation)
+
+### Test Structure (Future)
+```
+tests/
+  unit/          # Component/hook tests (Vitest)
+  integration/   # API/Edge Function tests
+  e2e/          # Playwright tests
+```
+
+## Configuration & Secrets
+
+### Environment Variables
+- **Frontend**: `VITE_*` prefix (exposed to browser)
+- **Backend**: `process.env.*` (server-side only)
+- **Edge Functions**: Set in Supabase Dashboard → Secrets
+
+### Required Env Vars
+- `VITE_SUPABASE_URL` - Supabase project URL
+- `VITE_SUPABASE_ANON_KEY` - Supabase anonymous key
+- `SUPABASE_SERVICE_ROLE_KEY` - Service role key (backend only)
+- `GOOGLE_CLIENT_ID` - Google OAuth client ID
+- `GOOGLE_CLIENT_SECRET` - Google OAuth secret
+- `OPENAI_API_KEY` - OpenAI API key (Edge Functions)
+
+### Never Commit
+- `.env` files
+- Secrets in code
+- API keys in comments
+- Service role keys
+
+## PR Hygiene
+
+### Commit Messages
+- **Format**: `type: description`
+- **Types**: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
+- **Examples**:
+  - `feat: add contact CSV import`
+  - `fix: validate user ownership in edge function`
+  - `docs: update architecture diagram`
+
+### Code Review Checklist
+- [ ] TypeScript types are correct (no `any`)
+- [ ] RLS policies tested with different users
+- [ ] Edge Functions validate ownership
+- [ ] No secrets committed
+- [ ] Follows design guidelines
+- [ ] Error handling implemented
+- [ ] Real-time subscriptions cleaned up (unsubscribe)
+
+### Small Diffs
+- **One feature per PR**: Don't mix unrelated changes
+- **Logical commits**: Group related changes
+- **Descriptive PR titles**: What and why
+
+## Common Pitfalls
+
+### ❌ Don't Do This
+- Use Drizzle for queries (use Supabase SDK)
+- Disable RLS for "testing"
+- Expose service role key to frontend
+- Skip ownership validation in Edge Functions
+- Use `any` types
+- Modify existing migrations
+- Hardcode API keys
+- Create large monolithic components
+
+### ✅ Do This Instead
+- Use `supabase.from('table').select()`
+- Test with multiple user accounts
+- Use service role only in Edge Functions
+- Always check `owned_by_profile === user.id`
+- Use types from `shared/schema.ts`
+- Create new migrations for schema changes
+- Use environment variables
+- Break components into smaller pieces
+
+## Performance Guidelines
+
+### Frontend
+- **Lazy load routes**: Use `React.lazy()` for code splitting (future)
+- **Memoize expensive computations**: `useMemo`, `useCallback`
+- **Optimize re-renders**: Use TanStack Query caching
+- **Real-time subscriptions**: Unsubscribe when component unmounts
+
+### Database
+- **Indexes**: Already added in migrations, verify for new queries
+- **Pagination**: Use `range()` for large datasets
+- **Select only needed fields**: Don't `select('*')` if not needed
+
+### Edge Functions
+- **Batch operations**: Process multiple items in one function call
+- **Cache results**: Use Supabase storage or in-memory cache
+- **Timeout**: Functions have 60s timeout, optimize long-running operations
+
+## Documentation
+
+### When to Update Docs
+- **New feature**: Update `docs/ARCHITECTURE.md` and `docs/FLOWS.md`
+- **New env var**: Update `docs/INDEX_FOR_AI.md`
+- **Breaking change**: Update relevant docs + migration guide
+- **New pattern**: Add to `.cursorrules` preferred patterns
+
+### Doc Locations
+- **AI onboarding**: `docs/INDEX_FOR_AI.md`
+- **System architecture**: `docs/ARCHITECTURE.md`
+- **Flow diagrams**: `docs/FLOWS.md`
+- **Design guidelines**: `design_guidelines.md`
+- **This file**: `.cursorrules`
+
+## Questions?
+
+- **Architecture**: See `docs/ARCHITECTURE.md`
+- **How to run**: See `docs/INDEX_FOR_AI.md`
+- **Design patterns**: See `design_guidelines.md`
+- **Database schema**: See `shared/schema.ts`
+- **Edge Functions**: See `supabase/functions/` examples
+
+## Quick Reference
+
+```typescript
+// Supabase query
+const { data, error } = await supabase
+  .from('contacts')
+  .select('*')
+  .eq('owned_by_profile', user.id);
+
+// Edge Function invocation
+const { data, error } = await supabase.functions.invoke('function-name', {
+  body: { param: value }
+});
+
+// Real-time subscription
+const channel = supabase
+  .channel('conversation-segments')
+  .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'conversation_segments' }, (payload) => {
+    // Handle update
+  })
+  .subscribe();
+```
+

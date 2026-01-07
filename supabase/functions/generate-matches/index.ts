@@ -5,6 +5,66 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+/**
+ * Calculate cosine similarity between two embedding vectors.
+ * 
+ * Cosine similarity measures the cosine of the angle between two vectors in a multi-dimensional space.
+ * Returns a value between -1 and 1:
+ * - 1.0: Identical vectors (same direction)
+ * - 0.8-0.9: Very similar (e.g., "B2B SaaS" vs "enterprise software")
+ * - 0.6-0.7: Somewhat similar
+ * - 0.0: Orthogonal (unrelated)
+ * - -1.0: Opposite direction
+ * 
+ * @param vecA First embedding vector (array of numbers)
+ * @param vecB Second embedding vector (array of numbers)
+ * @returns Cosine similarity score between -1 and 1, or null if invalid inputs
+ */
+function cosineSimilarity(vecA: number[] | null, vecB: number[] | null): number | null {
+  // Handle null or undefined inputs
+  if (!vecA || !vecB) {
+    return null;
+  }
+
+  // Handle empty vectors
+  if (vecA.length === 0 || vecB.length === 0) {
+    return null;
+  }
+
+  // Handle mismatched lengths (shouldn't happen with same embedding model, but be safe)
+  if (vecA.length !== vecB.length) {
+    console.warn(`Vector length mismatch: ${vecA.length} vs ${vecB.length}`);
+    return null;
+  }
+
+  // Calculate dot product (sum of element-wise products)
+  let dotProduct = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += vecA[i] * vecB[i];
+  }
+
+  // Calculate magnitude (length) of each vector
+  let magnitudeA = 0;
+  let magnitudeB = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    magnitudeA += vecA[i] * vecA[i];
+    magnitudeB += vecB[i] * vecB[i];
+  }
+  magnitudeA = Math.sqrt(magnitudeA);
+  magnitudeB = Math.sqrt(magnitudeB);
+
+  // Handle zero magnitude (shouldn't happen with real embeddings, but be safe)
+  if (magnitudeA === 0 || magnitudeB === 0) {
+    return null;
+  }
+
+  // Cosine similarity = dot product / (magnitude A * magnitude B)
+  const similarity = dotProduct / (magnitudeA * magnitudeB);
+
+  // Clamp to [-1, 1] range (should already be in range, but ensure for floating point precision)
+  return Math.max(-1, Math.min(1, similarity));
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -33,18 +93,72 @@ Deno.serve(async (req) => {
 
     const { conversationId } = await req.json();
     
-    // Verify conversation ownership using user client
-    const { data: conversation } = await supabaseUser
+    // Verify conversation ownership and get embedding
+    const { data: conversation, error: conversationError } = await supabaseUser
       .from('conversations')
-      .select('owned_by_profile')
+      .select('owned_by_profile, entity_embedding')
       .eq('id', conversationId)
       .single();
 
-    if (!conversation || conversation.owned_by_profile !== user.id) {
+    if (conversationError) {
+      console.error('Error fetching conversation:', conversationError);
+      return new Response(
+        JSON.stringify({ error: `Database error: ${conversationError.message}` }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (!conversation) {
+      console.error('Conversation not found:', conversationId);
+      return new Response(
+        JSON.stringify({ error: 'Conversation not found' }),
+        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (conversation.owned_by_profile !== user.id) {
+      console.error('Ownership mismatch:', { 
+        conversationOwner: conversation.owned_by_profile, 
+        userId: user.id 
+      });
       return new Response(
         JSON.stringify({ error: 'Forbidden: You do not own this conversation' }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    // Get or generate conversation embedding for semantic pre-filtering
+    let conversationEmbedding: number[] | null = null;
+    try {
+      if (conversation.entity_embedding) {
+        // Use cached embedding
+        conversationEmbedding = JSON.parse(conversation.entity_embedding);
+        console.log('✅ Using cached conversation embedding');
+      } else {
+        // Generate embedding by calling embed-conversation-entities function
+        console.log('📝 No cached embedding found, generating...');
+        const embedUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/embed-conversation-entities`;
+        const embedResponse = await fetch(embedUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': authHeader,
+            'Content-Type': 'application/json',
+            'apikey': Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+          },
+          body: JSON.stringify({ conversationId }),
+        });
+
+        if (embedResponse.ok) {
+          const embedData = await embedResponse.json();
+          conversationEmbedding = embedData.embedding;
+          console.log('✅ Generated conversation embedding');
+        } else {
+          console.warn('⚠️ Failed to generate embedding, will use GPT-only matching');
+        }
+      }
+    } catch (error) {
+      console.warn('⚠️ Error getting conversation embedding:', error);
+      // Continue without embedding (fallback to GPT-only)
     }
     
     // Use service role to read entities and contacts (bypasses RLS)
@@ -68,6 +182,70 @@ Deno.serve(async (req) => {
       );
     }
 
+    // ============================================================================
+    // SEMANTIC PRE-FILTERING: Use embeddings to find top 50 similar contacts
+    // ============================================================================
+    let preFilteredContacts = contacts;
+    let contactsWithSimilarity: Array<{ contact: any; similarity: number }> = []; // Store similarity scores for later use
+
+    if (conversationEmbedding) {
+      console.log('🔍 Starting semantic pre-filtering with embeddings...');
+      
+      // Calculate similarity for each contact
+      for (const contact of contacts) {
+        let contactEmbedding: number[] | null = null;
+        
+        // Prefer thesis_embedding, fall back to bio_embedding
+        if (contact.thesis_embedding) {
+          try {
+            contactEmbedding = JSON.parse(contact.thesis_embedding);
+          } catch (e) {
+            console.warn(`Failed to parse thesis_embedding for contact ${contact.id}`);
+          }
+        }
+        
+        if (!contactEmbedding && contact.bio_embedding) {
+          try {
+            contactEmbedding = JSON.parse(contact.bio_embedding);
+          } catch (e) {
+            console.warn(`Failed to parse bio_embedding for contact ${contact.id}`);
+          }
+        }
+
+        if (contactEmbedding) {
+          const similarity = cosineSimilarity(conversationEmbedding, contactEmbedding);
+          if (similarity !== null) {
+            contactsWithSimilarity.push({ contact, similarity });
+          }
+        }
+      }
+
+      // Sort by similarity (highest first)
+      contactsWithSimilarity.sort((a, b) => b.similarity - a.similarity);
+
+      console.log(`📊 Calculated similarity for ${contactsWithSimilarity.length} contacts with embeddings`);
+      if (contactsWithSimilarity.length > 0) {
+        console.log(`📈 Top 5 similarities: ${contactsWithSimilarity.slice(0, 5).map(c => `${c.contact.name}: ${c.similarity.toFixed(3)}`).join(', ')}`);
+      }
+
+      // Select top 50 by similarity
+      const topContacts = contactsWithSimilarity.slice(0, 50).map(c => c.contact);
+      
+      // Also include contacts without embeddings (they'll be scored by GPT)
+      const contactsWithoutEmbeddings = contacts.filter(c => {
+        const hasThesisEmbedding = c.thesis_embedding && c.thesis_embedding.trim().length > 0;
+        const hasBioEmbedding = c.bio_embedding && c.bio_embedding.trim().length > 0;
+        return !hasThesisEmbedding && !hasBioEmbedding;
+      });
+
+      // Combine: top 50 with embeddings + all without embeddings (up to reasonable limit)
+      preFilteredContacts = [...topContacts, ...contactsWithoutEmbeddings.slice(0, 50)];
+      
+      console.log(`✅ Pre-filtered to ${preFilteredContacts.length} contacts (${topContacts.length} with embeddings, ${Math.min(contactsWithoutEmbeddings.length, 50)} without)`);
+    } else {
+      console.log('⚠️ No conversation embedding available, skipping pre-filtering (using all contacts)');
+    }
+
     // Separate person names from other entities
     const personNames = entities?.filter(e => e.entity_type === 'person_name').map(e => e.value.toLowerCase()) || [];
     const otherEntities = entities?.filter(e => e.entity_type !== 'person_name') || [];
@@ -83,6 +261,7 @@ Deno.serve(async (req) => {
     console.log('Total contacts to search:', contacts.length);
 
     // Enhanced name matching - handle first/last name variations
+    // Note: Name matching works on all contacts (not just pre-filtered) since name mentions are explicit
     const nameMatches = contacts.filter(c => {
       if (!c.name) return false;
       
@@ -115,13 +294,20 @@ Deno.serve(async (req) => {
         
         return false;
       });
-    }).map(c => ({
-      contact_id: c.id,
-      contact_name: c.name,
-      score: 3, // Person mentioned by name = 3 stars
-      reasons: ['Mentioned by name in conversation'],
-      justification: `${c.name} was specifically mentioned as a potential match during the conversation.`,
-    }));
+    }).map(c => {
+      // Find embedding similarity for name matches (if available)
+      const similarityData = contactsWithSimilarity.find(cs => cs.contact.id === c.id);
+      const embeddingSimilarity = similarityData?.similarity ?? null;
+      
+      return {
+        contact_id: c.id,
+        contact_name: c.name,
+        score: 3, // Person mentioned by name = 3 stars (highest priority)
+        semantic_similarity: embeddingSimilarity,
+        reasons: ['Mentioned by name in conversation'],
+        justification: `${c.name} was specifically mentioned as a potential match during the conversation.`,
+      };
+    });
 
     console.log('Name matches found:', nameMatches.length);
     if (nameMatches.length > 0) {
@@ -136,9 +322,10 @@ Deno.serve(async (req) => {
         throw new Error('OPENAI_API_KEY not configured');
       }
 
-      // Limit contacts to 100 to avoid payload size issues and timeout
-      const limitedContacts = contacts.slice(0, 100);
-      console.log(`Processing ${limitedContacts.length} contacts for matching`);
+      // Use pre-filtered contacts (top 50 by similarity) instead of first 100
+      // This removes the arbitrary limit and uses intelligent semantic pre-filtering
+      const contactsToScore = preFilteredContacts.slice(0, 50); // Limit to 50 for GPT (pre-filtered by similarity)
+      console.log(`🎯 Processing ${contactsToScore.length} pre-filtered contacts for GPT scoring`);
 
       // Wrap OpenAI call in 25-second timeout
       const timeoutPromise = new Promise((_, reject) => 
@@ -157,6 +344,9 @@ Deno.serve(async (req) => {
           role: 'system',
           content: `You are a relationship matching engine for VCs and investors. 
           Score each contact based on how well their thesis matches the conversation entities.
+          
+          IMPORTANT: These contacts have been pre-filtered by semantic similarity using embeddings,
+          so they are already relevant. Focus on scoring the quality of the match.
           
           IMPORTANT: Partial matches are valuable! Contacts don't need to match ALL criteria.
           Even if only one field matches (e.g., just "pre-seed" stage), include it as a match.
@@ -183,7 +373,7 @@ Deno.serve(async (req) => {
           role: 'user',
           content: JSON.stringify({
             entities: entitySummary,
-            contacts: limitedContacts.map(c => ({
+            contacts: contactsToScore.map(c => ({
               id: c.id,
               name: c.name,
               company: c.company,
@@ -224,12 +414,31 @@ Deno.serve(async (req) => {
           aiMatches = JSON.parse(content.trim());
           console.log('AI matches parsed:', aiMatches.length);
           
-          // Add contact names to AI matches
+          // Add contact names and embedding similarity to AI matches
           aiMatches = aiMatches.map((m: any) => {
             const contact = contacts.find(c => c.id === m.contact_id);
+            // Find embedding similarity for this contact
+            const similarityData = contactsWithSimilarity.find(c => c.contact.id === m.contact_id);
+            const embeddingSimilarity = similarityData?.similarity ?? null;
+            
+            // Combine GPT score (70%) with embedding similarity (30%)
+            // GPT score is 1-3, normalize to 0-1 range, then combine
+            const gptScoreNormalized = (m.score - 1) / 2; // Convert 1-3 to 0-1
+            const embeddingScore = embeddingSimilarity ?? 0; // Already 0-1
+            
+            // Weighted combination: 70% GPT + 30% embedding
+            const combinedScore = 0.7 * gptScoreNormalized + 0.3 * embeddingScore;
+            
+            // Convert back to 1-3 star scale
+            const finalScore = Math.round(1 + combinedScore * 2); // Convert 0-1 to 1-3
+            const clampedScore = Math.max(1, Math.min(3, finalScore)); // Ensure 1-3 range
+            
             return {
               ...m,
               contact_name: contact?.name || 'Unknown',
+              semantic_similarity: embeddingSimilarity,
+              gpt_score: m.score, // Store original GPT score for explainability
+              score: clampedScore, // Use combined score
             };
           });
         } catch (parseError) {
@@ -267,6 +476,7 @@ Deno.serve(async (req) => {
           conversation_id: conversationId,
           contact_id: m.contact_id,
           score: m.score,
+          semantic_similarity: m.semantic_similarity ?? null, // Embedding similarity score
           reasons: m.reasons,
           justification: m.justification,
           status: 'pending',
@@ -277,6 +487,7 @@ Deno.serve(async (req) => {
         conversation_id,
         contact_id,
         score,
+        semantic_similarity,
         reasons,
         justification,
         status,

@@ -28,6 +28,8 @@ import {
   extractEntities,
   generateMatches,
   processParticipants,
+  extractTasks,
+  generateSummary,
 } from "@/lib/edgeFunctions";
 import { supabase } from "@/lib/supabase";
 
@@ -63,10 +65,11 @@ export default function RecordingDrawer({ open, onOpenChange, eventId }: Recordi
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const conversationIdRef = useRef<string | null>(null);
-  const lastExtractTimeRef = useRef<number>(0);
-  const lastMatchTimeRef = useRef<number>(0);
+  const lastExtractTimeRef = useRef<number>(Date.now());
+  const lastMatchTimeRef = useRef<number>(Date.now());
   const audioQueueRef = useRef<Blob[]>([]);
   const isUploadingRef = useRef(false);
+  const transcriptLengthRef = useRef<number>(0);
 
   const { toast } = useToast();
   const [, setLocation] = useLocation();
@@ -151,6 +154,11 @@ export default function RecordingDrawer({ open, onOpenChange, eventId }: Recordi
     console.log('✅ Conversation created:', result.id);
     setConversationId(result.id);
     conversationIdRef.current = result.id;
+    // Reset timing refs when starting a new recording
+    const startTime = Date.now();
+    lastExtractTimeRef.current = startTime;
+    lastMatchTimeRef.current = startTime;
+    console.log('⏱️ Reset polling timers to:', new Date(startTime).toISOString());
 
     console.log('🎤 Starting audio recorder...');
     await audioControls.startRecording();
@@ -176,14 +184,34 @@ export default function RecordingDrawer({ open, onOpenChange, eventId }: Recordi
       
       await processParticipants(conversationIdRef.current);
       
+      // Extract tasks from conversation
+      console.log('📋 Extracting tasks...');
+      try {
+        const taskData = await extractTasks(conversationIdRef.current);
+        console.log(`✅ Extracted ${taskData.extracted_count || 0} tasks`);
+      } catch (error) {
+        console.error('❌ Task extraction error:', error);
+        // Don't fail the whole flow if task extraction fails
+      }
+      
+      // Generate summary (includes tasks)
+      console.log('📝 Generating summary...');
+      try {
+        await generateSummary(conversationIdRef.current);
+        console.log('✅ Summary generated');
+      } catch (error) {
+        console.error('❌ Summary generation error:', error);
+        // Don't fail the whole flow if summary generation fails
+      }
+      
       await updateConversation.mutateAsync({
         id: conversationIdRef.current,
         status: 'completed',
       });
 
       toast({
-        title: "Matches and transcripts completed!",
-        description: "Your conversation has been processed successfully",
+        title: "Conversation processed!",
+        description: "Transcript, tasks, and summary have been generated",
       });
 
       setLocation(`/conversation/${conversationIdRef.current}`);
@@ -217,8 +245,9 @@ export default function RecordingDrawer({ open, onOpenChange, eventId }: Recordi
     setTranscript([]);
     setSuggestions([]);
     conversationIdRef.current = null;
-    lastExtractTimeRef.current = 0;
-    lastMatchTimeRef.current = 0;
+    lastExtractTimeRef.current = Date.now();
+    lastMatchTimeRef.current = Date.now();
+    transcriptLengthRef.current = 0;
     audioQueueRef.current = [];
   };
 
@@ -243,14 +272,18 @@ export default function RecordingDrawer({ open, onOpenChange, eventId }: Recordi
         },
         (payload) => {
           const segment = payload.new;
-          setTranscript((prev) => [
-            ...prev,
-            {
-              t: segment.timestamp_ms ? new Date(parseInt(segment.timestamp_ms)).toLocaleTimeString() : '',
-              speaker: null,
-              text: segment.text || '',
-            },
-          ]);
+          setTranscript((prev) => {
+            const newTranscript = [
+              ...prev,
+              {
+                t: segment.timestamp_ms ? new Date(parseInt(segment.timestamp_ms)).toLocaleTimeString() : '',
+                speaker: null,
+                text: segment.text || '',
+              },
+            ];
+            transcriptLengthRef.current = newTranscript.length;
+            return newTranscript;
+          });
         }
       )
       .on(
@@ -305,60 +338,121 @@ export default function RecordingDrawer({ open, onOpenChange, eventId }: Recordi
   }, [conversationId]);
 
   useEffect(() => {
-    if (!conversationId || !audioState.isRecording || audioState.isPaused) return;
+    if (!conversationId || !audioState.isRecording || audioState.isPaused) {
+      console.log('⏸️ Polling paused:', { 
+        conversationId, 
+        isRecording: audioState.isRecording, 
+        isPaused: audioState.isPaused 
+      });
+      return;
+    }
+
+    console.log('▶️ Starting polling interval for conversation:', conversationId);
+    console.log('📊 Initial state:', { 
+      transcriptLength: transcriptLengthRef.current,
+      lastExtractTime: lastExtractTimeRef.current,
+      lastMatchTime: lastMatchTimeRef.current,
+      timeSinceLastExtract: Date.now() - lastExtractTimeRef.current,
+      timeSinceLastMatch: Date.now() - lastMatchTimeRef.current
+    });
 
     const interval = setInterval(async () => {
       const now = Date.now();
+      const timeSinceLastExtract = now - lastExtractTimeRef.current;
+      const timeSinceLastMatch = now - lastMatchTimeRef.current;
       
-      if (now - lastExtractTimeRef.current >= 30000 && transcript.length > 0) {
+      // Log every 5 seconds, but only detailed info every 10 seconds to reduce noise
+      const shouldLogDetailed = Math.floor(timeSinceLastMatch / 10000) !== Math.floor((timeSinceLastMatch - 5000) / 10000);
+      
+      if (shouldLogDetailed || timeSinceLastExtract >= 30000 || timeSinceLastMatch >= 30000) {
+        console.log('🔄 Polling check:', {
+          transcriptLength: transcriptLengthRef.current,
+          timeSinceLastExtract: `${Math.floor(timeSinceLastExtract / 1000)}s`,
+          timeSinceLastMatch: `${Math.floor(timeSinceLastMatch / 1000)}s`,
+          shouldExtract: timeSinceLastExtract >= 30000 && transcriptLengthRef.current > 0,
+          shouldMatch: timeSinceLastMatch >= 30000 && transcriptLengthRef.current > 0,
+          waitingFor: timeSinceLastMatch < 30000 ? `${30 - Math.floor(timeSinceLastMatch / 1000)}s until next check` : 'READY'
+        });
+      }
+      
+      // Participant extraction (every 30s)
+      if (timeSinceLastExtract >= 30000 && transcriptLengthRef.current > 0) {
+        console.log(`⏰ 30s elapsed (${Math.floor(timeSinceLastExtract / 1000)}s), extracting participants...`);
+        console.log('⏰ 30s elapsed, extracting participants...');
         try {
           await extractParticipants(conversationId);
           lastExtractTimeRef.current = now;
+          console.log('✅ Participant extraction completed');
         } catch (error) {
-          console.error('Participant extraction error:', error);
+          console.error('❌ Participant extraction error:', error);
+          toast({
+            title: "Participant extraction failed",
+            description: error instanceof Error ? error.message : "Failed to extract participants",
+            variant: "destructive",
+          });
         }
       }
       
-      if (now - lastMatchTimeRef.current >= 30000 && transcript.length > 0) {
+      // Entity extraction and matching (every 30s)
+      if (timeSinceLastMatch >= 30000 && transcriptLengthRef.current > 0) {
+        console.log(`⏰ 30s elapsed (${Math.floor(timeSinceLastMatch / 1000)}s), starting entity extraction and matching...`);
         try {
           console.log('🔍 Extracting entities...');
-          await extractEntities(conversationId);
+          const entityData = await extractEntities(conversationId);
+          console.log('✅ Entities extracted:', entityData?.entities?.length || 0);
           
-          console.log('🎯 Generating matches...');
-          const matchData = await generateMatches(conversationId);
-          
-          if (matchData.matches && matchData.matches.length > 0) {
-            console.log(`🎉 Found ${matchData.matches.length} matches!`);
-            const newSuggestions = matchData.matches.map((m: any) => ({
-              contact: {
-                name: m.contact_name || 'Unknown',
-                email: m.contact_email || null,
-                company: m.contact_company || null,
-                title: m.contact_title || null,
-              },
-              score: m.score,
-              reasons: m.reasons || [],
-            }));
+          // Only generate matches if we have entities
+          if (entityData?.entities && entityData.entities.length > 0) {
+            console.log('🎯 Generating matches...');
+            const matchData = await generateMatches(conversationId);
             
-            setSuggestions(newSuggestions);
-            
-            const highValueMatches = newSuggestions.filter((s: Suggestion) => s.score === 3);
-            if (highValueMatches.length > 0) {
-              toast({
-                title: "New match found!",
-                description: `${highValueMatches[0].contact.name} - ${highValueMatches[0].score} stars`,
-              });
+            if (matchData.matches && matchData.matches.length > 0) {
+              console.log(`🎉 Found ${matchData.matches.length} matches!`);
+              const newSuggestions = matchData.matches.map((m: any) => ({
+                contact: {
+                  name: m.contact_name || 'Unknown',
+                  email: m.contact_email || null,
+                  company: m.contact_company || null,
+                  title: m.contact_title || null,
+                },
+                score: m.score,
+                reasons: m.reasons || [],
+              }));
+              
+              setSuggestions(newSuggestions);
+              
+              const highValueMatches = newSuggestions.filter((s: Suggestion) => s.score === 3);
+              if (highValueMatches.length > 0) {
+                toast({
+                  title: "New match found!",
+                  description: `${highValueMatches[0].contact.name} - ${highValueMatches[0].score} stars`,
+                });
+              }
+            } else {
+              console.log('ℹ️ No matches found this cycle');
             }
+          } else {
+            console.log('ℹ️ No entities found, skipping match generation');
           }
+          
           lastMatchTimeRef.current = now;
+          console.log('✅ Match generation cycle completed');
         } catch (error) {
-          console.error('Match generation error:', error);
+          console.error('❌ Match generation error:', error);
+          toast({
+            title: "Match generation failed",
+            description: error instanceof Error ? error.message : "Failed to generate matches",
+            variant: "destructive",
+          });
         }
       }
     }, 5000);
 
-    return () => clearInterval(interval);
-  }, [conversationId, audioState.isRecording, audioState.isPaused, transcript.length, toast]);
+    return () => {
+      console.log('🛑 Clearing polling interval');
+      clearInterval(interval);
+    };
+  }, [conversationId, audioState.isRecording, audioState.isPaused, toast]);
 
   const isRecording = audioState.isRecording;
 
